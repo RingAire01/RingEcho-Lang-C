@@ -1,0 +1,9 @@
+fn twice(x: i64) -> i64 { return x * 2; }
+fn inc(x: i64) -> i64 { return x + 1; }
+
+fn main() {
+    let r = 5 |> twice;
+    println(r);
+    let r2 = 10 |> twice |> inc;
+    println(r2);
+}

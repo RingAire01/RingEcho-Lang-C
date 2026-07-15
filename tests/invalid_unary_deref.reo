@@ -1,0 +1,4 @@
+fn main() {
+    let value: i64 = 42;
+    let invalid = *value;
+}

@@ -1,0 +1,14 @@
+fn main() {
+    let s1 = str_concat("Hello, ", "World!");
+    println(s1);
+    println(str_len(s1));
+
+    let s2 = str_slice("RingEcho", 0, 4);
+    println(s2);
+
+    let n = str_to_int("42");
+    println(n + 8);
+
+    println(str_eq("abc", "abc"));
+    println(str_eq("abc", "xyz"));
+}

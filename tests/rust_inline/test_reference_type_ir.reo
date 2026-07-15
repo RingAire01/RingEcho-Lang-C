@@ -1,0 +1,13 @@
+
+component Adder {
+    state base: i64
+
+    fn add(self, x: i64) -> i64 {
+        return self.base + x
+    }
+}
+fn main() {
+    let a = Adder { base: 10 }
+    let r = a.add(5)
+    println(r)
+}

@@ -1,0 +1,10 @@
+
+component Point {
+    state x: i64
+    state y: i64
+
+    fn dist(self) -> i64 {
+        return self.x + self.y
+    }
+}
+fn main() { }

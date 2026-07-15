@@ -1,0 +1,6 @@
+
+fn main() {
+    let double = |x: i64| x * 2
+    let r = double(5)
+    println(r)
+}

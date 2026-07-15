@@ -1,0 +1,3 @@
+struct Box<T> { value: T }
+impl<T> Box { fn get() -> T { return self.value } }
+fn main() { let b = Box<i64> { value: 9 } println(b.get()) }

@@ -1,0 +1,11 @@
+
+fn double(x: i64) -> i64 {
+    return x * 2
+}
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+    return f(x)
+}
+fn main() {
+    let r = apply(double, 21)
+    println(r)
+}

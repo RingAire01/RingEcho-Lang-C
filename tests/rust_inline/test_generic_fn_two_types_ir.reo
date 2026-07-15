@@ -1,0 +1,3 @@
+struct Point { x: i64 }
+impl Point { fn get() -> i64 { return self.x } }
+fn main() { let p = Point { x: 7 } println(p.get()) }

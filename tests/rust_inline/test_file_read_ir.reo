@@ -1,0 +1,3 @@
+fn main() {
+let t: (i64, bool) = (1, true)
+}

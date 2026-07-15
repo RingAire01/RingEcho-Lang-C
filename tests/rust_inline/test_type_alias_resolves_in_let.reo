@@ -1,0 +1,4 @@
+fn main() {
+  let eq: bool = str_eq("hello", "hello")
+  println(eq)
+}

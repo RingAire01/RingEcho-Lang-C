@@ -1,0 +1,4 @@
+fn main() {
+let s: str = stdin_read()
+println(s)
+}

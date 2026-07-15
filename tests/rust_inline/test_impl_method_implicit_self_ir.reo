@@ -1,0 +1,27 @@
+
+component FileManager {
+    state file_count: i64
+
+    fn load(self, path: str) -> i64 {
+        self.file_count = self.file_count + 1
+        return self.file_count
+    }
+}
+component WorkspaceManager {
+    state files: FileManager
+
+    fn open(self, path: str) -> i64 {
+        return self.files.load(path)
+    }
+}
+component CompilerSession {
+    state workspace: WorkspaceManager
+
+    fn run(self, path: str) -> i64 {
+        return self.workspace.open(path)
+    }
+}
+fn main() {
+    let s = CompilerSession { workspace: WorkspaceManager { files: FileManager { file_count: 0 } } }
+    println(s.run("main.reo"))
+}

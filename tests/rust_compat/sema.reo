@@ -1,0 +1,704 @@
+// Bootstrap semantic checker for RingEcho (v0.24.0)
+// Performs variable resolution and undefined-name checking.
+// Single-file, no imports. Uses same token kind numbers as parser.reo.
+
+struct Sema {
+    src: str,
+    pos: i64,
+    len: i64,
+    tok_kind: i64,
+    tok_start: i64,
+    tok_end: i64,
+    var_names: i64,
+    var_depths: i64,
+    depth: i64,
+    fn_names: i64,
+    struct_names: i64,
+    errs: i64,
+    err_count: i64,
+}
+
+impl Sema {
+    fn peek(self: Sema) -> i64 {
+        if self.pos >= self.len { return 0 }
+        return self.src[self.pos]
+    }
+
+    fn advance_ch(self: Sema) -> i64 {
+        let ch: i64 = self.src[self.pos]
+        self.pos = self.pos + 1
+        return ch
+    }
+
+    fn skip_ws(self: Sema) {
+        while self.pos < self.len {
+            let ch: i64 = self.peek()
+            if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
+                self.pos = self.pos + 1
+            } else { if ch == 47 && self.pos + 1 < self.len && self.src[self.pos + 1] == 47 {
+                while self.pos < self.len && self.peek() != 10 {
+                    self.pos = self.pos + 1
+                }
+            } else {
+                return
+            } }
+        }
+    }
+
+    fn text(self: Sema) -> str {
+        return str_slice(self.src, self.tok_start, self.tok_end)
+    }
+
+    fn keyword_kind(self: Sema) -> i64 {
+        let t: str = self.text()
+        if t == "fn" { return 40 }
+        if t == "let" { return 41 }
+        if t == "if" { return 42 }
+        if t == "else" { return 43 }
+        if t == "while" { return 44 }
+        if t == "for" { return 45 }
+        if t == "return" { return 46 }
+        if t == "struct" { return 47 }
+        if t == "enum" { return 48 }
+        if t == "impl" { return 49 }
+        if t == "true" { return 50 }
+        if t == "false" { return 51 }
+        if t == "pub" { return 52 }
+        if t == "mut" { return 53 }
+        if t == "const" { return 54 }
+        if t == "break" { return 55 }
+        if t == "continue" { return 56 }
+        if t == "component" { return 57 }
+        if t == "in" { return 58 }
+        if t == "self" { return 59 }
+        return 0
+    }
+
+    fn advance(self: Sema) {
+        self.skip_ws()
+        self.tok_start = self.pos
+        if self.pos >= self.len {
+            self.tok_kind = 0
+            self.tok_end = self.pos
+            return
+        }
+        let ch: i64 = self.peek()
+        if ch == 47 {
+            self.advance_ch()
+            self.tok_kind = 5
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 43 { self.advance_ch(); self.tok_kind = 2; self.tok_end = self.pos; return }
+        if ch == 45 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 62 { self.advance_ch(); self.tok_kind = 14 } else { self.tok_kind = 3 }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 42 { self.advance_ch(); self.tok_kind = 4; self.tok_end = self.pos; return }
+        if ch == 40 { self.advance_ch(); self.tok_kind = 7; self.tok_end = self.pos; return }
+        if ch == 41 { self.advance_ch(); self.tok_kind = 8; self.tok_end = self.pos; return }
+        if ch == 123 { self.advance_ch(); self.tok_kind = 9; self.tok_end = self.pos; return }
+        if ch == 125 { self.advance_ch(); self.tok_kind = 10; self.tok_end = self.pos; return }
+        if ch == 58 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 58 { self.advance_ch(); self.tok_kind = 15 } else { self.tok_kind = 11 }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 44 { self.advance_ch(); self.tok_kind = 12; self.tok_end = self.pos; return }
+        if ch == 59 { self.advance_ch(); self.tok_kind = 13; self.tok_end = self.pos; return }
+        if ch == 33 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 61 { self.advance_ch(); self.tok_kind = 22 } else { self.tok_kind = 21 }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 61 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 61 { self.advance_ch(); self.tok_kind = 16 } else {
+                if self.pos < self.len && self.peek() == 62 { self.advance_ch(); self.tok_kind = 14 } else { self.tok_kind = 6 }
+            }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 60 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 61 { self.advance_ch(); self.tok_kind = 17 } else { self.tok_kind = 18 }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 62 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 61 { self.advance_ch(); self.tok_kind = 19 } else { self.tok_kind = 20 }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 38 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 38 { self.advance_ch(); self.tok_kind = 23 } else { self.tok_kind = 24 }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 124 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 124 { self.advance_ch(); self.tok_kind = 25 } else {
+                if self.pos < self.len && self.peek() == 62 { self.advance_ch(); self.tok_kind = 33 } else { self.tok_kind = 26 }
+            }
+            self.tok_end = self.pos
+            return
+        }
+        if ch == 37 { self.advance_ch(); self.tok_kind = 27; self.tok_end = self.pos; return }
+        if ch == 91 { self.advance_ch(); self.tok_kind = 31; self.tok_end = self.pos; return }
+        if ch == 93 { self.advance_ch(); self.tok_kind = 32; self.tok_end = self.pos; return }
+        if ch == 63 { self.advance_ch(); self.tok_kind = 34; self.tok_end = self.pos; return }
+        if ch == 46 {
+            self.advance_ch()
+            if self.pos < self.len && self.peek() == 46 { self.advance_ch(); self.tok_kind = 29 } else { self.tok_kind = 30 }
+            self.tok_end = self.pos
+            return
+        }
+        if self.is_digit(ch) {
+            self.advance_ch()
+            while self.pos < self.len && self.is_digit(self.peek()) { self.advance_ch() }
+            self.tok_kind = 1
+            self.tok_end = self.pos
+            return
+        }
+        if self.is_alpha(ch) || ch == 95 {
+            self.advance_ch()
+            while self.pos < self.len && (self.is_alnum(self.peek()) || self.peek() == 95) { self.advance_ch() }
+            self.tok_end = self.pos
+            self.tok_kind = self.keyword_kind()
+            if self.tok_kind == 0 { self.tok_kind = 100 }
+            return
+        }
+        if ch == 34 {
+            self.advance_ch()
+            while self.pos < self.len {
+                let c: i64 = self.advance_ch()
+                if c == 34 { self.tok_kind = 101; self.tok_end = self.pos; return }
+                if c == 92 { if self.pos < self.len { self.advance_ch() } }
+            }
+            self.tok_kind = 101
+            self.tok_end = self.pos
+            return
+        }
+        self.advance_ch()
+        self.tok_kind = 0
+        self.tok_end = self.pos
+    }
+
+    fn is_digit(self: Sema, ch: i64) -> i64 {
+        if ch >= 48 && ch <= 57 { return 1 }
+        return 0
+    }
+
+    fn is_alpha(self: Sema, ch: i64) -> i64 {
+        if ch >= 65 && ch <= 90 { return 1 }
+        if ch >= 97 && ch <= 122 { return 1 }
+        return 0
+    }
+
+    fn is_alnum(self: Sema, ch: i64) -> i64 {
+        if self.is_alpha(ch) == 1 { return 1 }
+        if self.is_digit(ch) == 1 { return 1 }
+        return 0
+    }
+
+    fn match_tok(self: Sema, kind: i64) -> i64 {
+        if self.tok_kind == kind { self.advance(); return 1 }
+        return 0
+    }
+
+    fn skip_semi(self: Sema) {
+        if self.tok_kind == 13 { self.advance() }
+    }
+
+    fn add_error(self: Sema, msg: str) {
+        vec_push(self.errs, msg)
+        self.err_count = self.err_count + 1
+    }
+
+    fn push_scope(self: Sema) {
+        self.depth = self.depth + 1
+    }
+
+    fn pop_scope(self: Sema) {
+        self.depth = self.depth - 1
+    }
+
+    fn define_var(self: Sema, name: str) {
+        vec_push(self.var_names, name)
+        vec_push(self.var_depths, self.depth)
+    }
+
+    fn is_var_defined(self: Sema, name: str) -> i64 {
+        let i: i64 = vec_len(self.var_names) - 1
+        while i >= 0 {
+            let d: i64 = vec_get(self.var_depths, i)
+            if d <= self.depth {
+                let n: str = vec_get(self.var_names, i)
+                if n == name { return 1 }
+            }
+            i = i - 1
+        }
+        return 0
+    }
+
+    fn define_fn(self: Sema, name: str) {
+        vec_push(self.fn_names, name)
+    }
+
+    fn is_fn_defined(self: Sema, name: str) -> i64 {
+        let i: i64 = vec_len(self.fn_names) - 1
+        while i >= 0 {
+            let n: str = vec_get(self.fn_names, i)
+            if n == name { return 1 }
+            i = i - 1
+        }
+        return 0
+    }
+
+    fn is_struct_defined(self: Sema, name: str) -> i64 {
+        let i: i64 = vec_len(self.struct_names) - 1
+        while i >= 0 {
+            let n: str = vec_get(self.struct_names, i)
+            if n == name { return 1 }
+            i = i - 1
+        }
+        return 0
+    }
+
+    fn skip_balanced(self: Sema, open_k: i64, close_k: i64) {
+        if self.tok_kind != open_k { return }
+        self.advance()
+        let d: i64 = 1
+        while self.tok_kind != 0 && d > 0 {
+            if self.tok_kind == open_k { d = d + 1 }
+            if self.tok_kind == close_k { d = d - 1 }
+            if d > 0 { self.advance() }
+        }
+        if self.tok_kind == close_k { self.advance() }
+    }
+
+    fn skip_type(self: Sema) {
+        if self.tok_kind == 100 {
+            self.advance()
+            if self.tok_kind == 15 { self.advance(); self.skip_type() }
+        }
+        if self.tok_kind == 18 {
+            self.advance()
+            let d: i64 = 1
+            while self.tok_kind != 0 && d > 0 {
+                if self.tok_kind == 18 { d = d + 1 }
+                if self.tok_kind == 20 { d = d - 1 }
+                if d > 0 { self.advance() }
+            }
+            if self.tok_kind == 20 { self.advance() }
+        }
+        if self.tok_kind == 7 { self.skip_balanced(7, 8) }
+    }
+
+    fn check_ident_use(self: Sema, name: str) {
+        if self.is_fn_defined(name) == 1 { return }
+        if self.is_var_defined(name) == 1 { return }
+        if self.is_struct_defined(name) == 1 { return }
+        let msg: str = str_concat("undefined name: ", name)
+        self.add_error(msg)
+    }
+
+    fn skip_expr(self: Sema) {
+        self.skip_expr_prec(0)
+    }
+
+    fn skip_expr_prec(self: Sema, min_prec: i64) {
+        self.skip_unary()
+        while self.tok_kind != 0 {
+            let k: i64 = self.tok_kind
+            let prec: i64 = -1
+            if k == 33 { prec = 0 }
+            if k == 25 { prec = 1 }
+            if k == 23 { prec = 2 }
+            if k == 16 || k == 22 { prec = 3 }
+            if k == 18 || k == 17 || k == 20 || k == 19 { prec = 4 }
+            if k == 2 || k == 3 { prec = 5 }
+            if k == 4 || k == 5 || k == 27 { prec = 6 }
+            if prec < min_prec { return }
+            self.advance()
+            self.skip_unary()
+        }
+    }
+
+    fn skip_unary(self: Sema) {
+        if self.tok_kind == 3 || self.tok_kind == 21 {
+            self.advance()
+            self.skip_unary()
+            return
+        }
+        self.skip_postfix()
+    }
+
+    fn skip_postfix(self: Sema) {
+        self.skip_primary()
+        while self.tok_kind != 0 {
+            if self.tok_kind == 7 {
+                self.advance()
+                while self.tok_kind != 8 && self.tok_kind != 0 {
+                    self.skip_expr()
+                    if self.tok_kind == 12 { self.advance() }
+                }
+                if self.tok_kind == 8 { self.advance() }
+            } else { if self.tok_kind == 30 {
+                self.advance()
+                if self.tok_kind == 100 { self.advance() }
+            } else { if self.tok_kind == 31 {
+                self.advance()
+                self.skip_expr()
+                if self.tok_kind == 32 { self.advance() }
+            } else { if self.tok_kind == 34 {
+                self.advance()
+            } else { if self.tok_kind == 15 {
+                self.advance()
+                if self.tok_kind == 100 { self.advance() }
+            } else {
+                return
+            } } } } }
+        }
+    }
+
+    fn skip_primary(self: Sema) {
+        let k: i64 = self.tok_kind
+        if k == 1 || k == 101 || k == 50 || k == 51 { self.advance(); return }
+        if k == 59 { self.advance(); return }
+        if k == 7 {
+            self.advance()
+            self.skip_expr()
+            if self.tok_kind == 8 { self.advance() }
+            return
+        }
+        if k == 31 {
+            self.advance()
+            while self.tok_kind != 32 && self.tok_kind != 0 {
+                self.skip_expr()
+                if self.tok_kind == 12 { self.advance() }
+                if self.tok_kind == 13 { self.advance(); self.skip_expr() }
+            }
+            if self.tok_kind == 32 { self.advance() }
+            return
+        }
+        if k == 25 {
+            self.advance()
+            self.skip_expr()
+            return
+        }
+        if k == 26 {
+            self.advance()
+            while self.tok_kind != 26 && self.tok_kind != 0 {
+                self.advance()
+                if self.tok_kind == 11 { self.advance(); self.advance() }
+                if self.tok_kind == 12 { self.advance() }
+            }
+            if self.tok_kind == 26 { self.advance() }
+            self.skip_expr()
+            return
+        }
+        if k == 100 {
+            let name: str = self.text()
+            self.advance()
+            if self.tok_kind == 9 {
+                self.skip_balanced(9, 10)
+            } else {
+                self.check_ident_use(name)
+            }
+            return
+        }
+        if self.tok_kind != 0 { self.advance() }
+    }
+
+    fn first_pass(self: Sema) {
+        let saved_pos: i64 = self.pos
+        let saved_kind: i64 = self.tok_kind
+        let saved_start: i64 = self.tok_start
+        let saved_end: i64 = self.tok_end
+        self.advance()
+        while self.tok_kind != 0 {
+            let k: i64 = self.tok_kind
+            if k == 40 {
+                self.advance()
+                if self.tok_kind == 100 {
+                    let name: str = self.text()
+                    self.define_fn(name)
+                }
+                self.skip_to_block_end()
+            } else { if k == 47 {
+                self.advance()
+                if self.tok_kind == 100 {
+                    let sname: str = self.text()
+                    vec_push(self.struct_names, sname)
+                }
+                self.skip_to_block_end()
+            } else { if k == 48 {
+                self.advance()
+                self.skip_to_block_end()
+            } else { if k == 49 {
+                self.advance()
+                self.skip_to_block_end()
+            } else { if k == 57 {
+                self.advance()
+                if self.tok_kind == 100 {
+                    let cname: str = self.text()
+                    vec_push(self.struct_names, cname)
+                }
+                self.skip_to_block_end()
+            } else {
+                self.advance()
+            } } } } }
+        }
+        self.pos = saved_pos
+        self.tok_kind = saved_kind
+        self.tok_start = saved_start
+        self.tok_end = saved_end
+    }
+
+    fn skip_to_block_end(self: Sema) {
+        while self.tok_kind != 0 && self.tok_kind != 9 { self.advance() }
+        if self.tok_kind == 9 { self.skip_balanced(9, 10) }
+    }
+
+    fn check_program(self: Sema) {
+        self.advance()
+        while self.tok_kind != 0 {
+            self.check_top()
+        }
+    }
+
+    fn check_top(self: Sema) {
+        let k: i64 = self.tok_kind
+        if k == 40 { self.check_fn_decl() }
+        else { if k == 47 { self.skip_struct_decl() }
+        else { if k == 48 { self.skip_enum_decl() }
+        else { if k == 49 { self.skip_impl() }
+        else { if k == 54 { self.skip_const() }
+        else { if k == 52 {
+            self.advance()
+            self.check_top()
+        } else { if k == 53 {
+            self.advance()
+            self.check_top()
+        } else { if k == 57 { self.skip_component() }
+        else {
+            self.advance()
+        } } } } } } } }
+    }
+
+    fn skip_struct_decl(self: Sema) {
+        self.advance()
+        if self.tok_kind == 100 { self.advance() }
+        if self.tok_kind == 9 { self.skip_balanced(9, 10) }
+    }
+
+    fn skip_enum_decl(self: Sema) {
+        self.advance()
+        if self.tok_kind == 100 { self.advance() }
+        if self.tok_kind == 9 { self.skip_balanced(9, 10) }
+    }
+
+    fn skip_impl(self: Sema) {
+        self.advance()
+        if self.tok_kind == 100 { self.advance() }
+        if self.tok_kind == 9 { self.skip_balanced(9, 10) }
+    }
+
+    fn skip_component(self: Sema) {
+        self.advance()
+        if self.tok_kind == 100 { self.advance() }
+        if self.tok_kind == 9 { self.skip_balanced(9, 10) }
+    }
+
+    fn skip_const(self: Sema) {
+        self.advance()
+        if self.tok_kind == 100 { self.advance() }
+        if self.tok_kind == 11 { self.advance(); self.skip_type() }
+        if self.tok_kind == 6 { self.advance(); self.skip_expr() }
+        self.skip_semi()
+    }
+
+    fn check_fn_decl(self: Sema) {
+        self.advance()
+        let fn_name: str = ""
+        if self.tok_kind == 100 { fn_name = self.text(); self.advance() }
+        if self.tok_kind == 7 { self.advance() }
+        self.push_scope()
+        while self.tok_kind != 8 && self.tok_kind != 0 {
+            if self.tok_kind == 100 {
+                let param_name: str = self.text()
+                self.advance()
+                if self.tok_kind == 11 { self.advance(); self.skip_type() }
+                self.define_var(param_name)
+            } else { if self.tok_kind == 59 {
+                self.advance()
+                if self.tok_kind == 11 { self.advance(); self.skip_type() }
+                self.define_var("self")
+            } else {
+                self.advance()
+            } }
+            if self.tok_kind == 12 { self.advance() }
+        }
+        if self.tok_kind == 8 { self.advance() }
+        if self.tok_kind == 14 { self.advance(); self.skip_type() }
+        if self.tok_kind == 9 { self.check_block() }
+        self.pop_scope()
+    }
+
+    fn check_block(self: Sema) {
+        if self.tok_kind != 9 { return }
+        self.advance()
+        self.push_scope()
+        while self.tok_kind != 10 && self.tok_kind != 0 {
+            self.check_stmt()
+        }
+        self.pop_scope()
+        if self.tok_kind == 10 { self.advance() }
+    }
+
+    fn check_stmt(self: Sema) {
+        let k: i64 = self.tok_kind
+        if k == 41 { self.check_let() }
+        else { if k == 46 { self.check_return() }
+        else { if k == 42 { self.check_if() }
+        else { if k == 44 { self.check_while() }
+        else { if k == 45 { self.check_for() }
+        else { if k == 55 { self.advance(); self.skip_semi() }
+        else { if k == 56 { self.advance(); self.skip_semi() }
+        else {
+            self.check_expr_stmt()
+        } } } } } } }
+    }
+
+    fn check_let(self: Sema) {
+        self.advance()
+        let name: str = ""
+        if self.tok_kind == 53 { self.advance() }
+        if self.tok_kind == 100 { name = self.text(); self.advance() }
+        if self.tok_kind == 11 { self.advance(); self.skip_type() }
+        if self.tok_kind == 6 { self.advance(); self.skip_expr() }
+        if name != "" { self.define_var(name) }
+        self.skip_semi()
+    }
+
+    fn check_return(self: Sema) {
+        self.advance()
+        if self.tok_kind != 13 && self.tok_kind != 10 && self.tok_kind != 0 {
+            self.skip_expr()
+        }
+        self.skip_semi()
+    }
+
+    fn check_if(self: Sema) {
+        self.advance()
+        self.skip_expr()
+        if self.tok_kind == 9 { self.check_block() }
+        while self.tok_kind == 43 {
+            self.advance()
+            if self.tok_kind == 42 {
+                self.advance()
+                self.skip_expr()
+            }
+            if self.tok_kind == 9 { self.check_block() }
+        }
+    }
+
+    fn check_while(self: Sema) {
+        self.advance()
+        self.skip_expr()
+        if self.tok_kind == 9 { self.check_block() }
+    }
+
+    fn check_for(self: Sema) {
+        self.advance()
+        let loop_var: str = ""
+        if self.tok_kind == 100 { loop_var = self.text(); self.advance() }
+        if self.tok_kind == 58 { self.advance() }
+        self.skip_expr()
+        self.push_scope()
+        if loop_var != "" { self.define_var(loop_var) }
+        if self.tok_kind == 9 { self.check_block() }
+        self.pop_scope()
+    }
+
+    fn check_expr_stmt(self: Sema) {
+        self.skip_expr()
+        if self.tok_kind == 6 {
+            self.advance()
+            self.skip_expr()
+        }
+        self.skip_semi()
+    }
+}
+
+fn new_sema(src: str) -> Sema {
+    let s: Sema = Sema {
+        src: src,
+        pos: 0,
+        len: src.len(),
+        tok_kind: 0,
+        tok_start: 0,
+        tok_end: 0,
+        var_names: vec_new(),
+        var_depths: vec_new(),
+        depth: 0,
+        fn_names: vec_new(),
+        struct_names: vec_new(),
+        errs: vec_new(),
+        err_count: 0
+    }
+    vec_push(s.fn_names, "println")
+    vec_push(s.fn_names, "print")
+    vec_push(s.fn_names, "panic")
+    vec_push(s.fn_names, "assert")
+    vec_push(s.fn_names, "str_len")
+    vec_push(s.fn_names, "str_char_at")
+    vec_push(s.fn_names, "str_slice")
+    vec_push(s.fn_names, "str_concat")
+    vec_push(s.fn_names, "vec_new")
+    vec_push(s.fn_names, "vec_push")
+    vec_push(s.fn_names, "vec_get")
+    vec_push(s.fn_names, "vec_len")
+    vec_push(s.fn_names, "vec_set")
+    vec_push(s.fn_names, "vec_pop")
+    vec_push(s.fn_names, "vec_last")
+    vec_push(s.fn_names, "file_read")
+    vec_push(s.fn_names, "file_write")
+    vec_push(s.fn_names, "char_to_str")
+    vec_push(s.fn_names, "is_digit")
+    vec_push(s.fn_names, "is_alpha")
+    vec_push(s.fn_names, "is_alnum")
+    vec_push(s.fn_names, "to_string")
+    vec_push(s.fn_names, "free")
+    vec_push(s.fn_names, "exit")
+    vec_push(s.fn_names, "argv_len")
+    vec_push(s.fn_names, "argv_get")
+    vec_push(s.fn_names, "stdin_read")
+    vec_push(s.fn_names, "new_sema")
+    return s
+}
+
+fn main() {
+    let src: str = file_read("reo-bootstrap/test.reo")
+    let s: Sema = new_sema(src)
+    s.first_pass()
+    s.check_program()
+    if s.err_count == 0 {
+        println("sema: ok")
+    } else {
+        let i: i64 = 0
+        while i < s.err_count {
+            let msg: str = vec_get(s.errs, i)
+            print("error: ")
+            println(msg)
+            i = i + 1
+        }
+    }
+}

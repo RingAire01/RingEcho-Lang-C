@@ -1,0 +1,14 @@
+fn main() {
+    let value: i64 = 42;
+    let negative: i64 = -value;
+    let condition: bool = false;
+    let inverted: bool = !condition;
+    let reference = &value;
+    let mutable_reference = &mut value;
+    let dereferenced: i64 = *reference;
+    let mutable_dereferenced: i64 = *mutable_reference;
+    println(negative);
+    println(inverted);
+    println(dereferenced);
+    println(mutable_dereferenced);
+}

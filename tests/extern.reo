@@ -1,0 +1,10 @@
+extern {
+    fn puts(message: str) -> i32;
+    fn printf(format: str, ...) -> i32;
+}
+
+fn main() {
+    let value: i32 = puts("extern ffi");
+    println(value);
+    printf("variadic call", 7);
+}

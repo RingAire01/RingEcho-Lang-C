@@ -1,0 +1,19 @@
+struct Stack {
+    data: i64,
+    top: i64,
+}
+
+trait Container {
+    fn size(self) -> i64;
+}
+
+impl Container for Stack {
+    fn size(self) -> i64 {
+        return self.top;
+    }
+}
+
+fn main() {
+    let s = Stack { data: 0, top: 5 };
+    println(s.size());
+}

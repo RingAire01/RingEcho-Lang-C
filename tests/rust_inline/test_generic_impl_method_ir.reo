@@ -1,0 +1,9 @@
+
+@repr(C)
+struct StatLike {
+    mode: i32,
+    size: i64,
+}
+fn main() {
+    let s: StatLike = StatLike { mode: 0, size: 0 }
+}

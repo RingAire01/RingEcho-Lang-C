@@ -1,0 +1,6 @@
+import "math_utils"
+
+fn main() {
+    println(double_val(21));
+    println(add_vals(10, 20));
+}

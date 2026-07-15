@@ -1,0 +1,5 @@
+fn main() {
+let s: str = "hello"
+let i: i64 = s.len()
+println(i)
+}

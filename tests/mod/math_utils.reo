@@ -1,0 +1,7 @@
+fn double_val(x: i64) -> i64 {
+    return x * 2;
+}
+
+fn add_vals(a: i64, b: i64) -> i64 {
+    return a + b;
+}

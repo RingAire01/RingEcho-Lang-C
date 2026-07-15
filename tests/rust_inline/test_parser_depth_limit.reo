@@ -1,0 +1,5 @@
+fn main() {
+let s: str = "hi"
+let ch: char = s[0]
+println(ch)
+}

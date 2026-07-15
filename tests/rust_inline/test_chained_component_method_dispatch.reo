@@ -1,0 +1,7 @@
+fn main() {
+let v: i64 = vec_new()
+vec_push(v, 10)
+vec_set(v, 0, 99)
+let x: i64 = vec_get(v, 0)
+println(x)
+}

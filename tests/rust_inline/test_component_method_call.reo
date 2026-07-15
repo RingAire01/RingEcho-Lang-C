@@ -1,0 +1,4 @@
+fn main() {
+let x: i64 = match 1 { 1 => 42, _ => 99 }
+println(x)
+}

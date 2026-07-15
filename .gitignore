@@ -1,0 +1,20 @@
+# Build artifacts
+target/
+*.o
+*.so
+*.a
+rem
+rem.exe
+
+# Temp files
+*.tmp
+*.bak
+*.log
+diag.log
+debug_output.c
+output.reo.asm
+a.out
+a.exe
+
+# GC unit test binary
+gc_unit_test

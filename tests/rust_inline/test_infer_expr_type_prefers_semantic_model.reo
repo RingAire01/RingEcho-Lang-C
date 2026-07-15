@@ -1,0 +1,10 @@
+
+fn safe_div(a: i64, b: i64) -> Option<i64> {
+    if b == 0 { return Option::None }
+    return Option::Some(a / b)
+}
+fn unwrap_div(a: i64, b: i64) -> Option<i64> {
+    let x = safe_div(a, b)?
+    return Option::Some(x)
+}
+fn main() { println(unwrap_div(10, 2)) }

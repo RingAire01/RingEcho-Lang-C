@@ -1,0 +1,10 @@
+
+component Greeter {
+    fn hello(self) -> i64 {
+        return 42
+    }
+}
+fn main() {
+    let g = Greeter {}
+    println(g.hello())
+}

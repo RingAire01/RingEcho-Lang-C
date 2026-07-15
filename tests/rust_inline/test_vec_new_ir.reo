@@ -1,0 +1,2 @@
+let n: i64 = 4
+let xs = [0; n]

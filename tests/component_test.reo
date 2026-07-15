@@ -1,0 +1,18 @@
+component Counter {
+    state count: i64 = 0
+
+    fn inc(self) {
+        self.count = self.count + 1;
+    }
+
+    fn get(self) -> i64 {
+        return self.count;
+    }
+}
+
+fn main() {
+    let c = Counter { count: 10 };
+    c.inc();
+    c.inc();
+    println(c.get());
+}

@@ -1,0 +1,11 @@
+fn add(a: i64, b: i64) -> i64 { return a + b; }
+fn mul(a: i64, b: i64) -> i64 { return a * b; }
+
+fn main() {
+    let r1 = 3 |> add(4);
+    println(r1);
+    let r2 = 5 |> mul(6) |> add(10);
+    println(r2);
+    let r3 = 10 |> add(5) |> mul(2);
+    println(r3);
+}

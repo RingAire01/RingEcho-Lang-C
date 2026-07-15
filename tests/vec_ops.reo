@@ -1,0 +1,12 @@
+fn main() {
+    let v = vec_new();
+    vec_push(v, 10);
+    vec_push(v, 20);
+    vec_push(v, 30);
+    println(vec_len(v));
+    println(vec_get(v, 0));
+    println(vec_get(v, 1));
+    println(vec_get(v, 2));
+    println(vec_pop(v));
+    println(vec_len(v));
+}

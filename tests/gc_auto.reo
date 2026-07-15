@@ -1,0 +1,10 @@
+@gc(auto)
+fn main() {
+    let s = str_concat("hello", " world");
+    println(s);
+    let n = gc_stats();
+    println(n);
+    gc_collect();
+    let n2 = gc_stats();
+    println(n2);
+}

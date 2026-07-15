@@ -1,0 +1,15 @@
+fn safe_div(a: i64, b: i64) -> Option {
+    if b == 0 { return Option::None; }
+    return Option::Some(a / b);
+}
+
+fn main() {
+    let r = safe_div(42, 2);
+    if r.tag == 1 {
+        println(r.u.v0);
+    }
+    let r2 = safe_div(10, 0);
+    if r2.tag == 0 {
+        println(0);
+    }
+}

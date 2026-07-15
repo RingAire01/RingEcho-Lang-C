@@ -1,0 +1,2 @@
+struct Pair { a: i8, b: i128 }
+enum Maybe { None, Some(i128) }
