@@ -1,0 +1,6 @@
+fn main() {
+let s: str = "hi"
+for ch in s {
+println(ch)
+}
+}

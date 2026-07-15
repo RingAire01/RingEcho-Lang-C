@@ -1,0 +1,15 @@
+fn main() {
+    let i = 0;
+    let sum = 0;
+    while i < 100 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    println(sum);
+
+    let j = 10;
+    while j > 0 {
+        j = j - 1;
+    }
+    println(j);
+}

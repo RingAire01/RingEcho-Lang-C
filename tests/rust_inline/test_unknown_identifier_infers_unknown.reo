@@ -1,0 +1,7 @@
+
+fn first<T>(a: T, b: T) -> T {
+    return a
+}
+fn main() {
+    println(first<i64>(1, 2))
+}

@@ -1,0 +1,8 @@
+fn worker() -> i64 {
+    42
+}
+
+fn main() -> i64 {
+    let h = spawn worker();
+    await h
+}

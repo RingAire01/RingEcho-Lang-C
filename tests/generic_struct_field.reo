@@ -1,0 +1,12 @@
+struct Box<T> {
+    val: T,
+}
+
+fn main() {
+    let a = Box { val: 42 };
+    println(a.val);
+    let b = Box { val: 99 };
+    println(b.val);
+    let c = Box { val: 7 };
+    println(a.val + b.val + c.val);
+}

@@ -1,0 +1,6 @@
+fn main() {
+let v: i64 = vec_new()
+vec_push(v, 42)
+let x: i64 = vec_pop(v)
+println(x)
+}

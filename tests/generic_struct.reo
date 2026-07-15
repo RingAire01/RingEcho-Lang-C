@@ -1,0 +1,12 @@
+struct Pair<T> {
+    a: T,
+    b: T,
+}
+
+fn main() {
+    let p = Pair { a: 10, b: 20 };
+    println(p.a);
+    println(p.b);
+    let q = Pair { a: 99, b: 1 };
+    println(q.a + q.b);
+}

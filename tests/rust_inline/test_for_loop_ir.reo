@@ -1,0 +1,10 @@
+
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+    return f(x)
+}
+fn main() {
+    let base = 10
+    let add_base = |x: i64| x + base
+    let r = apply(add_base, 5)
+    println(r)
+}

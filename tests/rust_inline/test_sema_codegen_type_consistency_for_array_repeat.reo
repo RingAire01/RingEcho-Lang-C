@@ -1,0 +1,10 @@
+
+fn parse(s: i64) -> Result<i64, i64> {
+    if s < 0 { return Result::Err(s) }
+    return Result::Ok(s)
+}
+fn double_parse(s: i64) -> Result<i64, i64> {
+    let x = parse(s)?
+    return Result::Ok(x * 2)
+}
+fn main() { println(double_parse(5)) }

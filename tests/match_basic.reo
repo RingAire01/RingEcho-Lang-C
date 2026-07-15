@@ -1,0 +1,13 @@
+fn classify(n: i64) -> i64 {
+    return match n {
+        0 => 100,
+        42 => 200,
+        _ => 999,
+    };
+}
+
+fn main() {
+    println(classify(0));
+    println(classify(42));
+    println(classify(7));
+}

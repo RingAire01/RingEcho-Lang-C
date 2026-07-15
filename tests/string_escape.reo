@@ -1,0 +1,4 @@
+fn main() {
+    println("line one\nline two");
+    println("quote: \" slash: \\");
+}

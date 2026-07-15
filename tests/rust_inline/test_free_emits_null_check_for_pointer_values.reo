@@ -1,0 +1,5 @@
+fn main() {
+let a = 255u8
+let b = 3.5f
+let c = 1u128
+}

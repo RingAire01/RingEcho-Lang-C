@@ -1,0 +1,25 @@
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+trait Drawable {
+    fn draw_x(self) -> i64;
+    fn draw_y(self) -> i64;
+}
+
+impl Drawable for Point {
+    fn draw_x(self) -> i64 {
+        return self.x;
+    }
+    fn draw_y(self) -> i64 {
+        return self.y;
+    }
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 };
+    println(p.draw_x());
+    println(p.draw_y());
+    println(p.draw_x() + p.draw_y());
+}

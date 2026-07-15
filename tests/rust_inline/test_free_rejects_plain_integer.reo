@@ -1,0 +1,3 @@
+let a = 42u16
+let b = 42usize
+let c = 1.0f

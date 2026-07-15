@@ -1,0 +1,4 @@
+fn main() {
+let v: i64 = vec_new()
+println(v)
+}

@@ -1,0 +1,2 @@
+fn foo(x: u8) -> i64 { return x }
+fn main() { println(foo(200)) }

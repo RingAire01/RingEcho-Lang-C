@@ -1,0 +1,5 @@
+type Fd = i64
+fn main() {
+  let fd: Fd = 3
+  println(fd)
+}

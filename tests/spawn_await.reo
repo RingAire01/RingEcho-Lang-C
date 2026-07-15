@@ -1,0 +1,17 @@
+fn compute() -> i64 {
+    return 42;
+}
+
+fn double_it() -> i64 {
+    return 99;
+}
+
+fn main() {
+    let t1 = spawn compute();
+    let t2 = spawn double_it();
+    let r1 = await t1;
+    let r2 = await t2;
+    println(r1);
+    println(r2);
+    println(r1 + r2);
+}

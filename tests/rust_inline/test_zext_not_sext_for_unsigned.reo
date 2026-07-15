@@ -1,0 +1,6 @@
+fn main() {
+let s: str = "hello"
+if s == "hello" {
+println(1)
+}
+}

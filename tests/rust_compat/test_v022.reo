@@ -1,0 +1,7 @@
+fn maybe(x: i64) -> i64 {
+    let r = x?
+    return r
+}
+fn main() {
+    let v = maybe(1)
+}

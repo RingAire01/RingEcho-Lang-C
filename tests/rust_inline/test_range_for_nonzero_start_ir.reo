@@ -1,0 +1,8 @@
+fn main() {
+  let v: Vec<i64> = vec_new()
+  vec_push(v, 1)
+  vec_push(v, 2)
+  for x in v {
+    if x == 1 { break }
+  }
+}

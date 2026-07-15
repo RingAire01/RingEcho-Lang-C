@@ -1,0 +1,13 @@
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b
+}
+fn greet(name: str) -> str {
+    return str_concat("hello ", name)
+}
+fn main() {
+    let r = add(3, 4)
+    println(r)
+    let msg = greet("reo")
+    println(msg)
+}

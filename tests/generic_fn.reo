@@ -1,0 +1,11 @@
+fn max<T>(a: T, b: T) -> T {
+    if a > b { return a; }
+    return b;
+}
+
+fn main() {
+    let x = max(42, 10);
+    println(x);
+    let y = max(99, 100);
+    println(y);
+}

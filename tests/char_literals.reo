@@ -1,0 +1,22 @@
+fn main() {
+    let c: char = 'A';
+    println(char_to_str(c));
+    let tab: char = '\t';
+    println(char_to_str(tab));
+    let bs: char = '\\';
+    println(char_to_str(bs));
+    let sq: char = '\'';
+    println(char_to_str(sq));
+    let nl: char = '\n';
+    println(char_to_str(nl));
+    let d: char = '5';
+    println(is_digit(d));
+    println(is_alpha(d));
+    let l: char = 'x';
+    println(is_alpha(l));
+    println(is_alnum(l));
+    let ch: char = str_char_at("hello", 1);
+    println(char_to_str(ch));
+    let code: char = 'B';
+    println(code);
+}

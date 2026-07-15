@@ -1,0 +1,15 @@
+fn main() {
+    let v = vec_new();
+    vec_push(v, 10);
+    vec_push(v, 20);
+    vec_push(v, 30);
+    let len = vec_len(v);
+    println(len);
+    let first = vec_get(v, 0);
+    println(first);
+    let last = vec_last(v);
+    println(last);
+    let popped = vec_pop(v);
+    println(popped);
+    println(vec_len(v));
+}

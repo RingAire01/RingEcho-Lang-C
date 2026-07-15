@@ -1,0 +1,8 @@
+type Id = i64
+
+fn main() {
+    let x: Id = 42;
+    println(x);
+    let y: Id = 10;
+    println(x + y);
+}

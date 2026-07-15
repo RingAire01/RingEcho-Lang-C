@@ -1,0 +1,22 @@
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn color_id(c: Color) -> i64 {
+    return match c {
+        Color::Red => 100,
+        Color::Green => 200,
+        Color::Blue => 300,
+    };
+}
+
+fn main() {
+    let r = Color::Red;
+    println(color_id(r));
+    let g = Color::Green;
+    println(color_id(g));
+    let b = Color::Blue;
+    println(color_id(b));
+}

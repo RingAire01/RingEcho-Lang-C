@@ -1,0 +1,18 @@
+struct User {
+    id: i64,
+}
+
+trait Named {
+    fn get_id(self) -> i64;
+}
+
+impl Named for User {
+    fn get_id(self) -> i64 {
+        return self.id;
+    }
+}
+
+fn main() {
+    let u = User { id: 42 };
+    println(u.get_id());
+}

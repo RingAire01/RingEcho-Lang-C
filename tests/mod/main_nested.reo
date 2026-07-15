@@ -1,0 +1,8 @@
+import "middle"
+import "math_utils"
+
+fn main() {
+    println(middle_transform(3));
+    println(double_val(50));
+    println(add_vals(middle_transform(2), double_val(5)));
+}
