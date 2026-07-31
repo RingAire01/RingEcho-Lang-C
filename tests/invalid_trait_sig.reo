@@ -1,0 +1,16 @@
+// 负向测试: trait impl 方法签名不匹配(应被 rev check 拒绝)
+// trait 声明 show 返回 i64,impl 却返回 str → 返回类型不匹配
+trait Show {
+    fn show(self) -> i64;
+}
+
+struct Point { x: i64 }
+
+impl Show for Point {
+    fn show(self) -> str { return "not an int"; }
+}
+
+fn main() {
+    let p = Point { x: 1 };
+    println(p.show());
+}

@@ -1,0 +1,6 @@
+// 负向测试: enum variant payload 数错误(应被 rev check 拒绝)
+// Option::Some 需要一个 payload 参数,这里没给
+fn main() {
+    let x = Option::Some();
+    println(1);
+}

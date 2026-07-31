@@ -48,6 +48,7 @@ void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
     s->global_scope = re0_scope_new(NULL); s->current_scope = s->global_scope;
     Re0StmtVec_init(&s->checked); s->had_error = false; s->infer_depth = 0;
     s->current_fn_return = NULL;
+    s->loop_depth = 0; s->fn_depth = 0;
 
     /* 预注入 Option/Result 核心枚举 */
     if (!re0_model_find_enum(model, "Option")) {
@@ -201,7 +202,35 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                 if (elen < sizeof(enum_name)) {
                     memcpy(enum_name, e->call.callee->ident.name, elen);
                     enum_name[elen] = '\0';
-                    if (re0_model_find_enum(s->model, enum_name)) {
+                    Re0EnumDef *ed = re0_model_find_enum(s->model, enum_name);
+                    if (ed) {
+                        /* variant 名在 "::" 之后;校验 variant 存在性与 payload 数 */
+                        const char *variant_name = colon + (colon[1] == ':' ? 2 : 1);
+                        if (*variant_name) {
+                            int tag = re0_model_variant_tag(ed, variant_name);
+                            if (tag < 0) {
+                                re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                                 "enum '%s' has no variant '%s'",
+                                                 enum_name, variant_name);
+                                s->had_error = true;
+                            } else {
+                                int has_payload = ed->variant_has_payload[tag];
+                                int argc = e->call.arg_count;
+                                if (has_payload && argc == 0) {
+                                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                                     "variant '%s::%s' expects a payload argument",
+                                                     enum_name, variant_name);
+                                    s->had_error = true;
+                                } else if (!has_payload && argc > 0) {
+                                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                                     "variant '%s::%s' takes no payload argument",
+                                                     enum_name, variant_name);
+                                    s->had_error = true;
+                                }
+                            }
+                        }
+                        for (int ai = 0; ai < e->call.arg_count; ai++)
+                            infer_type(s, e->call.args[ai]);
                         Re0Type *t = re0_type_make(RE0_TYPE_ENUM, NULL);
                         t->named.name = strdup(enum_name);
                         return t;
@@ -263,6 +292,51 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
         case EXPR_STRUCT_INIT: {
             Re0Type *t = re0_type_make(RE0_TYPE_STRUCT, NULL);
             t->named.name = strdup(e->struct_init.name);
+            /* 字段校验(仅对已知非泛型 struct): 多余字段 / 缺失字段 / 类型不匹配 */
+            Re0StructDef *sd = re0_model_find_struct(s->model, e->struct_init.name);
+            if (sd) {
+                for (int i = 0; i < e->struct_init.field_count; i++) {
+                    const char *fn = e->struct_init.fields[i].field;
+                    Re0Expr *val = e->struct_init.fields[i].value;
+                    Re0Type *vt = val ? infer_type(s, val) : NULL;
+                    int found = 0;
+                    for (int j = 0; j < sd->field_count; j++) {
+                        if (strcmp(sd->fields[j].name, fn) != 0) continue;
+                        found = 1;
+                        Re0Type *ft = sd->fields[j].type;
+                        if (vt && ft && vt->kind != RE0_TYPE_UNKNOWN &&
+                            ft->kind != RE0_TYPE_UNKNOWN && !sema_assignable(vt, ft)) {
+                            re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                "field '%s' of struct '%s': expected '%s', got '%s'",
+                                fn, e->struct_init.name,
+                                re0_type_kind_name(ft->kind), re0_type_kind_name(vt->kind));
+                            s->had_error = true;
+                        }
+                        break;
+                    }
+                    if (!found) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                            "struct '%s' has no field '%s'", e->struct_init.name, fn);
+                        s->had_error = true;
+                    }
+                }
+                for (int j = 0; j < sd->field_count; j++) {
+                    const char *dn = sd->fields[j].name;
+                    int found = 0;
+                    for (int i = 0; i < e->struct_init.field_count; i++)
+                        if (strcmp(e->struct_init.fields[i].field, dn) == 0) { found = 1; break; }
+                    if (!found) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                            "missing field '%s' in initializer for struct '%s'",
+                            dn, e->struct_init.name);
+                        s->had_error = true;
+                    }
+                }
+            } else {
+                for (int i = 0; i < e->struct_init.field_count; i++)
+                    if (e->struct_init.fields[i].value)
+                        infer_type(s, e->struct_init.fields[i].value);
+            }
             return t;
         }
         case EXPR_MATCH:
@@ -435,8 +509,10 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             Re0Scope *saved = s->current_scope;
             s->current_scope = re0_scope_new(s->current_scope);
             infer_type(s, stmt->while_stmt.cond);
+            s->loop_depth++;
             for (int i = 0; i < stmt->while_stmt.body_count; i++)
                 check_stmt_inner(s, stmt->while_stmt.body[i]);
+            s->loop_depth--;
             s->current_scope = saved;
             break;
         }
@@ -465,12 +541,19 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             }
             if (!var_ty) var_ty = re0_type_make(RE0_TYPE_I64, NULL);
             re0_scope_define(s->current_scope, stmt->for_stmt.var, var_ty, true);
+            s->loop_depth++;
             for (int i = 0; i < stmt->for_stmt.body_count; i++)
                 check_stmt_inner(s, stmt->for_stmt.body[i]);
+            s->loop_depth--;
             s->current_scope = saved;
             break;
         }
         case STMT_RETURN:
+            if (s->fn_depth == 0) {
+                re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                 "return statement outside of a function");
+                s->had_error = true;
+            }
             if (stmt->return_stmt.value) {
                 Re0Type *vt = infer_type(s, stmt->return_stmt.value);
                 /* B3: 返回类型校验（对照当前函数返回类型） */
@@ -482,6 +565,21 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                                     re0_type_kind_name(vt->kind));
                     s->had_error = true;
                 }
+            }
+            break;
+        case STMT_BREAK:
+            if (s->loop_depth == 0) {
+                re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                 "break statement outside of a loop");
+                s->had_error = true;
+            }
+            if (stmt->break_stmt.value) infer_type(s, stmt->break_stmt.value);
+            break;
+        case STMT_CONTINUE:
+            if (s->loop_depth == 0) {
+                re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                 "continue statement outside of a loop");
+                s->had_error = true;
             }
             break;
         case STMT_FUNCTION: {
@@ -533,8 +631,10 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             }
             Re0Type *prev_fn_return = s->current_fn_return;
             s->current_fn_return = ret;
+            s->fn_depth++;
             for (int i = 0; i < stmt->function.body_count; i++)
                 check_stmt_inner(s, stmt->function.body[i]);
+            s->fn_depth--;
             s->current_fn_return = prev_fn_return;
             s->current_scope = saved;
             break;
@@ -683,24 +783,54 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                 }
             }
 
-            /* trait 方法完整性检查 */
+            /* trait 方法完整性 + 签名检查 */
             if (tn) {
                 Re0TraitDef *td = re0_model_find_trait(s->model, tn);
                 if (td) {
                     for (int i = 0; i < td->method_count; i++) {
-                        bool found = false;
+                        Re0TraitMethod *tm = &td->methods[i];
+                        Re0Stmt *impl_m = NULL;
                         for (int j = 0; j < stmt->impl.method_count; j++) {
                             Re0Stmt *m = stmt->impl.methods[j];
                             if (m && m->kind == STMT_FUNCTION &&
-                                strcmp(m->function.name, td->methods[i].name) == 0) {
-                                found = true;
+                                strcmp(m->function.name, tm->name) == 0) {
+                                impl_m = m;
                                 break;
                             }
                         }
-                        if (!found) {
+                        if (!impl_m) {
                             re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
                                              "missing method '%s' in impl of '%s' for '%s'",
-                                             td->methods[i].name, tn, sn);
+                                             tm->name, tn, sn);
+                            s->had_error = true;
+                            continue;
+                        }
+                        /* 参数个数 */
+                        if (impl_m->function.param_count != tm->param_count) {
+                            re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                             "method '%s' of trait '%s': expected %d parameter(s), got %d",
+                                             tm->name, tn, tm->param_count, impl_m->function.param_count);
+                            s->had_error = true;
+                        } else {
+                            /* 逐参数类型(self 等无显式类型的参数两侧皆 NULL,自动跳过) */
+                            for (int k = 0; k < tm->param_count; k++) {
+                                const char *tp = tm->param_types ? tm->param_types[k] : NULL;
+                                const char *mp = impl_m->function.params[k].ptype;
+                                if (tp && mp && strcmp(tp, mp) != 0) {
+                                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                                     "method '%s' parameter %d: expected '%s', got '%s'",
+                                                     tm->name, k + 1, tp, mp);
+                                    s->had_error = true;
+                                }
+                            }
+                        }
+                        /* 返回类型(NULL 视为 unit) */
+                        const char *tr = tm->ret_type ? tm->ret_type : "unit";
+                        const char *mr = impl_m->function.ret_type ? impl_m->function.ret_type : "unit";
+                        if (strcmp(tr, mr) != 0) {
+                            re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                             "method '%s' return type: expected '%s', got '%s'",
+                                             tm->name, tr, mr);
                             s->had_error = true;
                         }
                     }
@@ -721,8 +851,10 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                     if (!pt) pt = re0_type_make(RE0_TYPE_I64, NULL);
                     re0_scope_define(s->current_scope, m->function.params[j].name, pt, false);
                 }
+                s->fn_depth++;
                 for (int j = 0; j < m->function.body_count; j++)
                     check_stmt_inner(s, m->function.body[j]);
+                s->fn_depth--;
             }
             s->current_scope = saved;
             break;
