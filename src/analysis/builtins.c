@@ -1,3 +1,4 @@
+#include "safe.h"
 #include "builtins.h"
 #include "types.h"
 #include "model.h"
@@ -13,7 +14,7 @@ static void add_builtin(Re0BuiltinRegistry *r, const char *name, const char *ret
     fn.params = NULL;
     fn.param_count = n;
     if (n > 0) {
-        fn.params = (Re0BuiltinParam*)calloc((size_t)n, sizeof(Re0BuiltinParam));
+        fn.params = (Re0BuiltinParam*)xcalloc((size_t)n, sizeof(Re0BuiltinParam));
         for (int i = 0; i < n; i++) {
             fn.params[i].name = strdup(pnames[i]);
             fn.params[i].type = re0_model_std_type(ptypes[i]);
@@ -68,6 +69,24 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
                 (const char*[]){"p"}, (const char*[]){"ptr"}, 1);
     add_builtin(r, "gc_remove_root", "unit",
                 (const char*[]){"p"}, (const char*[]){"ptr"}, 1);
+    /* svec: 字符串向量（char** 内部，Aire 前置） */
+    add_builtin(r, "svec_new", "i64", NULL, NULL, 0);
+    add_builtin(r, "svec_push", "unit",
+                (const char*[]){"v","s"}, (const char*[]){"i64","str"}, 2);
+    add_builtin(r, "svec_get", "str", si_s, si_t, 2);
+    add_builtin(r, "svec_len", "i64", str_s, str_t, 1);
+    add_builtin(r, "svec_free", "unit", str_s, str_t, 1);
+    /* dir: 目录遍历（dirent 跨平台） */
+    add_builtin(r, "dir_open", "i64", str_s, str_t, 1);
+    add_builtin(r, "dir_next", "str", str_s, str_t, 1);
+    add_builtin(r, "dir_close", "unit", str_s, str_t, 1);
+    /* path: 路径操作 */
+    add_builtin(r, "path_join", "str", ab_s, ab_t, 2);
+    add_builtin(r, "path_ext", "str", str_s, str_t, 1);
+    add_builtin(r, "path_base", "str", str_s, str_t, 1);
+    add_builtin(r, "path_isdir", "bool", str_s, str_t, 1);
+    /* proc: 子进程 */
+    add_builtin(r, "proc_run", "i32", str_s, str_t, 1);
 }
 
 Re0BuiltinFn *re0_builtin_lookup(Re0BuiltinRegistry *r, const char *name) {

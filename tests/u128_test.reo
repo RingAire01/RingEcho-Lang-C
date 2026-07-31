@@ -1,0 +1,6 @@
+fn main() {
+    let a: u128 = 0;
+    let b: u128 = 0;
+    let c = a & b;
+    println(c);
+}

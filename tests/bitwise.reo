@@ -1,0 +1,28 @@
+fn main() {
+    let a = 0xF0;
+    let b = 0x0F;
+
+    let band = a & b;
+    println(band);
+
+    let bor = a | b;
+    println(bor);
+
+    let bxor = a ^ b;
+    println(bxor);
+
+    let bnot = ~0;
+    println(bnot);
+
+    let shl = 1 << 4;
+    println(shl);
+
+    let shr = 256 >> 2;
+    println(shr);
+
+    let mask = 0xFF & 0x3F;
+    println(mask);
+
+    let combine = (0xAA | 0x55) ^ 0xFF;
+    println(combine);
+}

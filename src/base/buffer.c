@@ -1,4 +1,5 @@
 #include "buffer.h"
+#include "safe.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -26,7 +27,7 @@ bool re0_buffer_reserve(Re0Buffer *b, size_t extra) {
         if (nc > SIZE_MAX / 2) { nc = need; break; }
         nc *= 2;
     }
-    char *nd = (char*)realloc(b->data, nc);
+    char *nd = (char*)xrealloc(b->data, nc);
     if (!nd) {
         b->failed = true;
         return false;
@@ -83,6 +84,7 @@ void re0_buffer_clear(Re0Buffer *b) {
 }
 
 void re0_buffer_free(Re0Buffer *b) {
+    if (!b) return;
     free(b->data);
     b->data = NULL;
     b->len = 0;

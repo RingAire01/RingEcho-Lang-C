@@ -31,6 +31,8 @@ typedef struct Re0Backend {
 } Re0Backend;
 
 extern Re0Backend re0_backend_c;
+/* Emits C for a freestanding environment; the caller owns compilation and linking. */
+extern Re0Backend re0_backend_c_freestanding;
 extern Re0Backend re0_backend_reo;
 
 void re0_codegen_init(Re0Codegen *c, Re0ErrorList *errors,

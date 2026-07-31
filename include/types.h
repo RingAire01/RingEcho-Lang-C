@@ -40,6 +40,9 @@ bool        re0_type_is_float(Re0TypeKind k);
 bool        re0_type_is_numeric(Re0TypeKind k);
 bool        re0_type_is_signed(Re0TypeKind k);
 size_t      re0_type_sizeof(Re0TypeKind k);
+/* 递归计算完整类型尺寸（复合类型：Array=elem×n、Slice=16、Vec=24、Tuple=Σ）。
+ * Struct/Enum/Fn/Generic 需 model 布局信息，保守返回 0。 */
+size_t      re0_type_sizeof_full(const Re0Type *t);
 Re0Type    *re0_type_make(Re0TypeKind k, void *arena);
 Re0Type    *re0_type_make_array(Re0Type *inner, size_t n, void *arena);
 Re0Type    *re0_type_make_tuple(Re0Type **elems, int n, void *arena);
@@ -53,6 +56,8 @@ Re0Type    *re0_type_make_named(Re0TypeKind kind, const char *name, void *arena)
 Re0Type    *re0_type_make_generic(const char *name, Re0Type **args,
                                   int arg_count, void *arena);
 Re0Type    *re0_type_make_typevar(const char *name, void *arena);
+
+Re0Type    *re0_type_parse(const char *s);
 
 /* ── 结构化类型比较 ──
  * 递归比较两个类型的结构。

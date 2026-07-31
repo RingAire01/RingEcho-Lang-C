@@ -1,20 +1,23 @@
 #include "gc/gc_tracing.h"
 #include <stdlib.h>
+#include <stdbool.h>
 
 /* ── 内部：灰色标记队列（mark stack / worklist） ── */
 typedef struct {
     Re0GcObject **data;
     int count;
     int cap;
+    bool oom;   /* mark 栈 OOM：放弃本次 sweep，防误回收活对象 */
 } GcMarkStack;
 
 static bool ms_push(GcMarkStack *ms, Re0GcObject *obj)
 {
+    if (ms->oom) return false;
     if (ms->count >= ms->cap) {
         int nc = ms->cap ? ms->cap * 2 : RE0_GC_MARK_STACK_INIT;
         Re0GcObject **nd = (Re0GcObject **)realloc(ms->data,
                                 sizeof(Re0GcObject *) * nc);
-        if (!nd) return false;
+        if (!nd) { ms->oom = true; return false; }   /* OOM：放弃 sweep */
         ms->data = nd;
         ms->cap  = nc;
     }
@@ -44,15 +47,15 @@ void re0_gc_tracing_reset_colors(Re0GcObject *head)
     }
 }
 
-void re0_gc_tracing_mark(Re0GcRootSet *roots, Re0GcListeners *ls)
+bool re0_gc_tracing_mark(Re0GcRootSet *roots, Re0GcListeners *ls)
 {
     (void)ls;
-    GcMarkStack ms = { NULL, 0, 0 };
+    GcMarkStack ms = { NULL, 0, 0, false };
 
     /* phase 1：roots → GRAY 入队 */
     re0_gc_roots_foreach(roots, mark_visit, &ms);
 
-    /* phase 2：处理灰色队列 */
+    /* phase 2：处理灰色队列。OOM 则提前终止。 */
     while (ms.count > 0) {
         Re0GcObject *obj = ms.data[--ms.count];
         obj->color = RE0_GC_COLOR_BLACK;
@@ -61,9 +64,12 @@ void re0_gc_tracing_mark(Re0GcRootSet *roots, Re0GcListeners *ls)
         if (obj->trace) {
             obj->trace(obj, mark_visit, &ms);
         }
+        if (ms.oom) break;
     }
 
+    bool oom = ms.oom;
     free(ms.data);
+    return oom;   /* true = mark OOM，调用方应放弃 sweep */
 }
 
 int re0_gc_tracing_sweep(Re0GcObject **head, Re0GcStats *stats)
@@ -117,8 +123,19 @@ void re0_gc_tracing_collect(Re0GcTracingCtx *ctx)
         re0_gc_listeners_emit(ctx->listeners, &ev);
     }
 
-    /* mark from roots → sweep */
-    re0_gc_tracing_mark(ctx->roots, ctx->listeners);
+    /* mark from roots → sweep.
+     * 若 mark 期间 mark-stack OOM，必须放弃本次 sweep——否则未被
+     * 标记的可达对象会被误回收，导致 use-after-free（C1 修复）。 */
+    bool mark_oom = re0_gc_tracing_mark(ctx->roots, ctx->listeners);
+    if (mark_oom) {
+        if (ctx->listeners) {
+            Re0GcEvent ev = re0_gc_event_make(
+                RE0_GC_EV_COLLECT_DONE, ctx->mode, ctx->algo);
+            ev.freed_count = 0;
+            re0_gc_listeners_emit(ctx->listeners, &ev);
+        }
+        return;
+    }
     int freed = re0_gc_tracing_sweep(ctx->head, ctx->stats);
 
     /* 通知：回收完成 */

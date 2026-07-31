@@ -18,3 +18,13 @@ a.exe
 
 # GC unit test binary
 gc_unit_test
+
+# 散落实验/临时文件
+/temp/
+/test_hello.reo
+/compile_fix.bat
+rev
+rev.exe
+rvm
+rvm.exe
+re0_output.c

@@ -33,14 +33,8 @@ static Re0GcMode scan_gc_mode(Re0StmtVec *checked) {
 bool re0_codegen_generate(Re0Codegen *c, Re0StmtVec *checked) {
     if (!c || !c->backend || !checked) return false;
     c->gc_mode = scan_gc_mode(checked);
-    fprintf(stderr, "[DIAG] codegen: checked=%zu gc_mode=%d\n",
-            Re0StmtVec_len(checked), c->gc_mode);
-    fflush(stderr);
     c->backend->begin(c);
     for (size_t i = 0; i < Re0StmtVec_len(checked); i++) {
-        fprintf(stderr, "[DIAG]   gen_stmt[%zu] kind=%d\n", i,
-                checked->data[i] ? checked->data[i]->kind : -1);
-        fflush(stderr);
         c->backend->gen_stmt(c, checked->data[i], 0);
     }
     c->backend->end(c);

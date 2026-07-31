@@ -3,6 +3,7 @@
 #include "vec.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include <pthread.h>
 
 typedef enum {
     RE0_EV_LEXER_START,
@@ -35,12 +36,16 @@ VEC_DECLARE(Re0HandlerVec, Re0EventHandlerEntry)
 
 typedef struct {
     Re0HandlerVec handlers;
+    pthread_mutex_t mtx;
+    volatile bool cancelled;
 } Re0EventBus;
 
 void re0_event_bus_init(Re0EventBus *bus);
 void re0_event_bus_subscribe(Re0EventBus *bus, Re0EventHandler fn, void *ctx);
 void re0_event_bus_emit(Re0EventBus *bus, Re0Event *ev);
 bool re0_event_bus_should_cancel(Re0EventBus *bus);
+void re0_event_bus_cancel(Re0EventBus *bus);
+void re0_event_bus_reset(Re0EventBus *bus);
 void re0_event_bus_free(Re0EventBus *bus);
 
 #endif

@@ -6,5 +6,5 @@ extern {
 fn main() {
     let value: i32 = puts("extern ffi");
     println(value);
-    printf("variadic call", 7);
+    printf("variadic call %lld", 7);
 }

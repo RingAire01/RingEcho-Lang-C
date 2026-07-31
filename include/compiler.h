@@ -11,6 +11,8 @@
 #include "build.h"
 #include "lint.h"
 #include "re0_gc.h"
+#include "re0_event.h"
+#include "re0_manager.h"
 
 typedef struct {
     Re0Arena           *arena;
@@ -26,6 +28,7 @@ typedef struct {
     Re0GcPool          *gc;
     Re0GcMode           gc_mode;
     bool                had_error;
+    Re0EventBus         bus;
 } Re0Compiler;
 
 void re0_compiler_init(Re0Compiler *c, Re0Backend *backend);

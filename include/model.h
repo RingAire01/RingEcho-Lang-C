@@ -116,8 +116,7 @@ const char  *re0_model_lookup_method(Re0SemanticModel *m, const char *struct_nam
 /* ── 方法符号 mangling ── */
 /* trait=NULL → "{struct}_{method}"；否则 → "{trait}_{struct}_{method}" */
 const char  *re0_model_method_symbol(const char *trait, const char *struct_name,
-                                     const char *method);
-/* 结果由静态缓冲区返回，下次调用覆盖 */
+                                     const char *method, char *out, size_t out_sz);
 
 /* ── 类型别名 ── */
 void         re0_model_register_type_alias(Re0SemanticModel *m, const char *name,

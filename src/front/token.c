@@ -27,6 +27,7 @@ static const char *sym_names[] = {
     [TK_LESS]="<", [TK_LESSEQUAL]="<=", [TK_RIGHTSHIFT]=">>",
     [TK_LEFTSHIFT]="<<", [TK_AMPERSAND]="&", [TK_DOUBLEAMPERSAND]="&&",
     [TK_PIPE]="|", [TK_DOUBLEPIPE]="||", [TK_BANG]="!",
+    [TK_CARET]="^", [TK_TILDE]="~",
     [TK_PLUSEQUAL]="+=", [TK_MINUSEQUAL]="-=", [TK_STAREQUAL]="*=",
     [TK_SLASHEQUAL]="/=",
 };
@@ -52,6 +53,7 @@ bool re0_token_is_keyword(Re0TokenKind k) {
 
 bool re0_token_is_binop(Re0TokenKind k) {
     return k == TK_DOUBLEDOT ||
+           k == TK_CARET ||
            (k >= TK_PLUS && k <= TK_BANG) ||
            (k >= TK_PLUSEQUAL && k <= TK_SLASHEQUAL);
 }
@@ -59,13 +61,14 @@ bool re0_token_is_binop(Re0TokenKind k) {
 int re0_token_binop_precedence(Re0TokenKind k) {
     switch (k) {
         case TK_DOUBLEDOT: return 1;
-        case TK_DOUBLEPIPE: case TK_PIPE: return 1;
-        case TK_DOUBLEAMPERSAND: case TK_AMPERSAND: return 2;
+        case TK_DOUBLEPIPE: return 1;
+        case TK_DOUBLEAMPERSAND: return 2;
         case TK_DOUBLEEQUAL: case TK_BANGEQUAL: return 3;
         case TK_LESS: case TK_LESSEQUAL: case TK_GREATER: case TK_GREATEREQUAL: return 4;
         case TK_PLUS: case TK_MINUS: return 5;
         case TK_STAR: case TK_SLASH: case TK_PERCENT: return 6;
-        case TK_RIGHTSHIFT: case TK_LEFTSHIFT: return 7;
+        case TK_PIPE: case TK_RIGHTSHIFT: case TK_LEFTSHIFT: return 7;
+        case TK_AMPERSAND: case TK_CARET: return 8;
         default: return 0;
     }
 }

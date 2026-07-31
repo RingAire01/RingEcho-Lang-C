@@ -1,3 +1,4 @@
+#include "safe.h"
 /*
  * lsp_json.c — 精简 JSON 解析器实现
  */
@@ -7,10 +8,13 @@
 #include <stdio.h>
 
 /* ── 解析器状态 ── */
+#include "re0_limits.h"
+
 typedef struct {
     const char *src;
     size_t pos;
     size_t len;
+    int depth;
 } Parser;
 
 static void skip_ws(Parser *p) {
@@ -27,7 +31,7 @@ static char *parse_string_raw(Parser *p) {
     if (p->pos >= p->len || p->src[p->pos] != '"') return NULL;
     p->pos++;
     size_t cap = 64, len = 0;
-    char *buf = (char*)malloc(cap);
+    char *buf = (char*)xmalloc(cap);
     while (p->pos < p->len && p->src[p->pos] != '"') {
         char c = p->src[p->pos++];
         if (c == '\\' && p->pos < p->len) {
@@ -42,7 +46,15 @@ static char *parse_string_raw(Parser *p) {
                 default: c = esc; break;
             }
         }
-        if (len + 1 >= cap) { cap *= 2; buf = realloc(buf, cap); }
+        if (len >= RE0_MAX_JSON_STRING) {
+            free(buf);
+            return NULL;  /* 字符串超过上限 */
+        }
+        if (len + 1 >= cap) {
+            cap = cap * 2;
+            if (cap > RE0_MAX_JSON_STRING + 1) cap = RE0_MAX_JSON_STRING + 1;
+            buf = xrealloc(buf, cap);
+        }
         buf[len++] = c;
     }
     if (p->pos < p->len) p->pos++; /* skip closing " */
@@ -52,7 +64,7 @@ static char *parse_string_raw(Parser *p) {
 
 static JVal *parse_object(Parser *p) {
     p->pos++; /* skip { */
-    JVal *v = (JVal*)calloc(1, sizeof(JVal));
+    JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
     v->type = J_OBJ;
     v->obj.keys = NULL; v->obj.vals = NULL; v->obj.count = 0;
     int cap = 0;
@@ -68,8 +80,8 @@ static JVal *parse_object(Parser *p) {
         if (!val) { free(key); free(v); return NULL; }
         if (v->obj.count >= cap) {
             cap = cap ? cap * 2 : 8;
-            v->obj.keys = realloc(v->obj.keys, cap * sizeof(char*));
-            v->obj.vals = realloc(v->obj.vals, cap * sizeof(JVal*));
+            v->obj.keys = xrealloc(v->obj.keys, cap * sizeof(char*));
+            v->obj.vals = xrealloc(v->obj.vals, cap * sizeof(JVal*));
         }
         v->obj.keys[v->obj.count] = key;
         v->obj.vals[v->obj.count] = val;
@@ -84,7 +96,7 @@ static JVal *parse_object(Parser *p) {
 
 static JVal *parse_array(Parser *p) {
     p->pos++; /* skip [ */
-    JVal *v = (JVal*)calloc(1, sizeof(JVal));
+    JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
     v->type = J_ARR;
     v->arr.items = NULL; v->arr.count = 0;
     int cap = 0;
@@ -94,7 +106,7 @@ static JVal *parse_array(Parser *p) {
         if (!item) { free(v); return NULL; }
         if (v->arr.count >= cap) {
             cap = cap ? cap * 2 : 8;
-            v->arr.items = realloc(v->arr.items, cap * sizeof(JVal*));
+            v->arr.items = xrealloc(v->arr.items, cap * sizeof(JVal*));
         }
         v->arr.items[v->arr.count++] = item;
         skip_ws(p);
@@ -105,14 +117,24 @@ static JVal *parse_array(Parser *p) {
     return v;
 }
 
+static JVal *parse_value_impl(Parser *p);
+
 static JVal *parse_value(Parser *p) {
+    if (p->depth > RE0_MAX_JSON_DEPTH) return NULL;
+    p->depth++;
+    JVal *v = parse_value_impl(p);
+    p->depth--;
+    return v;
+}
+
+static JVal *parse_value_impl(Parser *p) {
     skip_ws(p);
     if (p->pos >= p->len) return NULL;
     char c = p->src[p->pos];
     if (c == '{') return parse_object(p);
     if (c == '[') return parse_array(p);
     if (c == '"') {
-        JVal *v = (JVal*)calloc(1, sizeof(JVal));
+        JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
         v->type = J_STR;
         v->s = parse_string_raw(p);
         if (!v->s) { free(v); return NULL; }
@@ -120,19 +142,19 @@ static JVal *parse_value(Parser *p) {
     }
     if (c == 't' && p->pos + 4 <= p->len && strncmp(p->src + p->pos, "true", 4) == 0) {
         p->pos += 4;
-        JVal *v = (JVal*)calloc(1, sizeof(JVal));
+        JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
         v->type = J_BOOL; v->b = true;
         return v;
     }
     if (c == 'f' && p->pos + 5 <= p->len && strncmp(p->src + p->pos, "false", 5) == 0) {
         p->pos += 5;
-        JVal *v = (JVal*)calloc(1, sizeof(JVal));
+        JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
         v->type = J_BOOL; v->b = false;
         return v;
     }
     if (c == 'n' && p->pos + 4 <= p->len && strncmp(p->src + p->pos, "null", 4) == 0) {
         p->pos += 4;
-        JVal *v = (JVal*)calloc(1, sizeof(JVal));
+        JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
         v->type = J_NULL;
         return v;
     }
@@ -142,7 +164,7 @@ static JVal *parse_value(Parser *p) {
         double d = strtod(p->src + p->pos, &end);
         size_t consumed = (size_t)(end - (p->src + p->pos));
         p->pos += consumed;
-        JVal *v = (JVal*)calloc(1, sizeof(JVal));
+        JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
         v->type = J_NUM; v->n = d;
         return v;
     }
@@ -150,7 +172,7 @@ static JVal *parse_value(Parser *p) {
 }
 
 JVal *json_parse(const char *text, size_t len) {
-    Parser p = { text, 0, len };
+    Parser p = { text, 0, len, 0 };
     return parse_value(&p);
 }
 

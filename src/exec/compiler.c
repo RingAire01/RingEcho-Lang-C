@@ -1,3 +1,4 @@
+#include "safe.h"
 #include "compiler.h"
 #include "workspace.h"
 #include <stdio.h>
@@ -8,6 +9,7 @@
 void re0_compiler_init(Re0Compiler *c, Re0Backend *backend) {
     if (!c) return;
     c->had_error = false;
+    re0_event_bus_init(&c->bus);
     c->backend = backend;
     re0_error_list_init(&c->errors);
     re0_model_init(&c->model);
@@ -30,64 +32,142 @@ void re0_compiler_init(Re0Compiler *c, Re0Backend *backend) {
     c->gc_mode = RE0_GC_NONE;
 }
 
-static char *read_file(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz < 0) { fclose(f); return NULL; }
-    char *buf = (char*)malloc((size_t)sz + 1);
-    if (!buf) { fclose(f); return NULL; }
-    size_t rd = fread(buf, 1, (size_t)sz, f);
-    buf[rd] = '\0';
-    fclose(f);
-    return buf;
-}
 
-bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *output) {
-    /* 多文件模块化：workspace 递归加载 import，合并所有顶层语句 */
+typedef struct CompileCtx {
+    Re0Compiler   *comp;
+    const char    *path;
+    const char    *output;
+    Re0StmtVec     stmts;
+    const char    *code;
+} CompileCtx;
+
+typedef struct {
+    Re0Manager     base;
+    CompileCtx    *ctx;
+} StageMgr;
+
+static bool stage_frontend_run(Re0Manager *m) {
+    StageMgr *s = (StageMgr*)m;
+    CompileCtx *ctx = s->ctx;
+    Re0Compiler *c = ctx->comp;
+    re0_manager_emit_event(m, RE0_EV_LEXER_START, (void*)ctx->path, ctx->path);
     Re0Workspace ws;
-    re0_workspace_init(&ws, path);
-    Re0StmtVec all_stmts = re0_workspace_load(&ws, path, c->arena, &c->errors,
-                                               &c->lexer, &c->parser);
+    re0_workspace_init(&ws, ctx->path);
+    ctx->stmts = re0_workspace_load(&ws, ctx->path, c->arena, &c->errors,
+                                    &c->lexer, &c->parser);
     re0_workspace_free(&ws);
-
-    if (Re0StmtVec_len(&all_stmts) == 0) {
+    re0_manager_emit_event(m, RE0_EV_LEXER_DONE, NULL, NULL);
+    if (Re0StmtVec_len(&ctx->stmts) == 0) {
         re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                         "no statements parsed from '%s'", path);
+                         "no statements parsed from '%s'", ctx->path);
         c->had_error = true;
         return false;
     }
+    return true;
+}
 
-    bool sema_ok = re0_sema_check(&c->sema, &all_stmts);
-    if (!sema_ok) { c->had_error = true; return false; }
-
+static bool stage_sema_run(Re0Manager *m) {
+    StageMgr *s = (StageMgr*)m;
+    CompileCtx *ctx = s->ctx;
+    Re0Compiler *c = ctx->comp;
+    if (re0_manager_should_cancel(m)) return false;
+    re0_manager_emit_event(m, RE0_EV_SEMA_START, NULL, NULL);
+    bool ok = re0_sema_check(&c->sema, &ctx->stmts);
+    re0_manager_emit_event(m, RE0_EV_SEMA_DONE, NULL, NULL);
+    if (!ok) { c->had_error = true; return false; }
     re0_lint_run(&c->sema.checked, &c->errors);
-    if (!re0_codegen_generate(&c->codegen, &c->sema.checked)) { c->had_error = true; return false; }
+    return true;
+}
 
-    const char *code = re0_codegen_output(&c->codegen);
-    if (!code) {
+static bool stage_codegen_run(Re0Manager *m) {
+    StageMgr *s = (StageMgr*)m;
+    CompileCtx *ctx = s->ctx;
+    Re0Compiler *c = ctx->comp;
+    if (re0_manager_should_cancel(m)) return false;
+    re0_manager_emit_event(m, RE0_EV_CODEGEN_START, NULL, NULL);
+    if (!re0_codegen_generate(&c->codegen, &c->sema.checked)) {
+        re0_manager_emit_event(m, RE0_EV_CODEGEN_DONE, NULL, NULL);
+        c->had_error = true;
+        return false;
+    }
+    re0_manager_emit_event(m, RE0_EV_CODEGEN_DONE, NULL, NULL);
+    ctx->code = re0_codegen_output(&c->codegen);
+    if (!ctx->code) {
         re0_error_append(&c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
                          "cannot obtain generated output");
         c->had_error = true;
         return false;
     }
+    return true;
+}
 
+static bool stage_build_run(Re0Manager *m) {
+    StageMgr *s = (StageMgr*)m;
+    CompileCtx *ctx = s->ctx;
+    Re0Compiler *c = ctx->comp;
+    if (re0_manager_should_cancel(m)) return false;
+    re0_manager_emit_event(m, RE0_EV_BUILD_START, NULL, NULL);
     if (c->backend == &re0_backend_c) {
-        if (!re0_build_compile(&c->build, code, output)) { c->had_error = true; return false; }
+        if (!re0_build_compile(&c->build, ctx->code, ctx->output)) {
+            re0_manager_emit_event(m, RE0_EV_BUILD_DONE, NULL, NULL);
+            c->had_error = true;
+            return false;
+        }
     } else {
-        const char *fname = output ? output : "output.reo.asm";
+        const char *fname = ctx->output ? ctx->output : "output.reo.asm";
         FILE *f = fopen(fname, "w");
-        if (f) { fputs(code, f); fclose(f); }
+        if (f) { fputs(ctx->code, f); fclose(f); }
         else {
             re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
                              "cannot write assembly to '%s'", fname);
             c->had_error = true;
         }
     }
-
+    re0_manager_emit_event(m, RE0_EV_BUILD_DONE, NULL, NULL);
     return !c->had_error;
+}
+
+static StageMgr make_stage(const char *name, Re0EventBus *bus,
+                           Re0ErrorList *errors, CompileCtx *ctx,
+                           bool (*run)(Re0Manager*)) {
+    StageMgr s;
+    memset(&s, 0, sizeof(s));
+    s.base.name = name;
+    s.base.bus = bus;
+    s.base.errors = errors;
+    s.base.run = run;
+    s.ctx = ctx;
+    return s;
+}
+
+bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *output) {
+    if (!c || !path) return false;
+    re0_event_bus_reset(&c->bus);
+
+    CompileCtx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.comp = c;
+    ctx.path = path;
+    ctx.output = output;
+    Re0StmtVec_init(&ctx.stmts);
+
+    StageMgr frontend = make_stage("frontend", &c->bus, &c->errors, &ctx, stage_frontend_run);
+    StageMgr sema     = make_stage("sema",     &c->bus, &c->errors, &ctx, stage_sema_run);
+    StageMgr codegen  = make_stage("codegen",  &c->bus, &c->errors, &ctx, stage_codegen_run);
+    StageMgr build    = make_stage("build",    &c->bus, &c->errors, &ctx, stage_build_run);
+
+    Re0Manager root;
+    memset(&root, 0, sizeof(root));
+    root.name = "compiler";
+    root.bus = &c->bus;
+    root.errors = &c->errors;
+    re0_manager_register_child(&root, &frontend.base);
+    re0_manager_register_child(&root, &sema.base);
+    re0_manager_register_child(&root, &codegen.base);
+    re0_manager_register_child(&root, &build.base);
+
+    bool ok = re0_manager_execute(&root);
+    return ok && !c->had_error;
 }
 
 bool re0_compiler_run(Re0Compiler *c, const char *path) {
@@ -133,4 +213,5 @@ void re0_compiler_destroy(Re0Compiler *c) {
     re0_build_destroy(&c->build);
     if (c->gc) re0_gc_destroy(c->gc);
     if (c->arena) re0_arena_free(c->arena);
+    re0_event_bus_free(&c->bus);
 }

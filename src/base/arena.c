@@ -1,6 +1,7 @@
 #include "arena.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 Re0Arena *re0_arena_new(void) {
     Re0Arena *a = (Re0Arena*)malloc(sizeof(Re0Arena));
@@ -31,8 +32,9 @@ static Re0ArenaBlock *re0_arena_new_block(size_t min_sz) {
 
 void *re0_arena_alloc(Re0Arena *a, size_t sz) {
     if (!a || !sz) return NULL;
+    if (sz > SIZE_MAX - 7) return NULL;
     size_t aligned = (sz + 7) & ~7;
-    if (a->cur->used + aligned > a->cur->cap) {
+    if (aligned > a->cur->cap - a->cur->used) {
         Re0ArenaBlock *nb = re0_arena_new_block(aligned);
         if (!nb) return NULL;
         a->cur->next = nb;

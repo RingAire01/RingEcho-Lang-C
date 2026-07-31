@@ -1,0 +1,4 @@
+/* std/io — I/O */
+fn read_file(path: str) -> str { return file_read(path) }
+fn write_file(path: str, data: str) { file_write(path, data) }
+fn print_line(s: str) { println(s) }

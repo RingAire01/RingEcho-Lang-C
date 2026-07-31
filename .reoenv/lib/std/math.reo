@@ -1,0 +1,4 @@
+/* std/math */
+fn abs_val(n: i64) -> i64 { if n < 0 { return 0 - n } return n }
+fn max_val(a: i64, b: i64) -> i64 { if a > b { return a } return b }
+fn min_val(a: i64, b: i64) -> i64 { if a < b { return a } return b }

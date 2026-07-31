@@ -1,0 +1,5 @@
+/* std/vec */
+fn new_vec() -> i64 { return vec_new() }
+fn push_val(v: i64, x: i64) { vec_push(v, x) }
+fn get_val(v: i64, i: i64) -> i64 { return vec_get(v, i) }
+fn size(v: i64) -> i64 { return vec_len(v) }

@@ -4,8 +4,7 @@
 #include "error.h"
 #include "stream.h"
 #include "ast.h"
-
-#define RE0_MAX_PARSE_DEPTH 512
+#include "re0_limits.h"
 
 typedef struct {
     Re0Arena      *arena;
@@ -14,6 +13,7 @@ typedef struct {
     Re0StmtVec     stmts;
     int            depth;
     bool           had_error;
+    bool           had_any_error;
 } Re0Parser;
 
 void re0_parser_init(Re0Parser *p, Re0Arena *arena, Re0ErrorList *errors);

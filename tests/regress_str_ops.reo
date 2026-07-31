@@ -1,0 +1,31 @@
+// 回归测试: 字符串 + 运算符(曾生成 C 指针相加而非 __reo_str_concat)
+// 修复点: backend_c.c 字符串拼接 + expr_is_string(BINARY)
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+fn main() {
+    // 字面量 + 字面量
+    check("lit+lit", str_eq("foo" + "bar", "foobar"));
+    // 变量 + 变量
+    let a = "Hello, ";
+    let b = "World!";
+    check("var+var", str_eq(a + b, "Hello, World!"));
+    // 变量 + char_to_str
+    let c = char_to_str(65);
+    check("var+char_to_str", str_eq(a + c, "Hello, A"));
+    // str_concat 结果 + 字面量(嵌套)
+    check("concat+lit", str_eq(str_concat("x", "y") + "z", "xyz"));
+    // println 对 a+b 的类型识别(曾当整数打印)
+    let s = "ab" + "cd";
+    check("println_str_type", str_eq(s, "abcd"));
+    // 多重拼接 a+b+c
+    check("triple", str_eq("a" + "b" + "c", "abc"));
+    println("--- regress_str_ops done ---");
+}

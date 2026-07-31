@@ -1,0 +1,37 @@
+// 回归测试: 窄化转换 as u8/i8/char(曾调用未定义的 __reo_safe_narrow 编译失败)
+// 修复点: backend_c.c 补 __reo_safe_narrow 定义(Rust as 回绕语义)
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+fn main() {
+    // 高字节 char -> i64 -> as u8(中文首字节 0xE7=231, signed char=-25)
+    let zh = "知";
+    let raw = zh[0] as i64;
+    if raw < 0 {
+        raw = raw + 256;
+    }
+    check("zh_byte_raw", raw == 231);
+    let u = (zh[0] as u8) as i64;
+    check("zh_as_u8", u == 231);
+    // 回绕: 300 as u8 = 44
+    check("wrap_300", (300 as u8) as i64 == 44);
+    // 回绕: -1 as u8 = 255
+    check("wrap_neg1", ((-1) as u8) as i64 == 255);
+    // i64 -> char 窄化
+    let ch = 231 as char;
+    let back = ch as i64;
+    if back < 0 {
+        back = back + 256;
+    }
+    check("as_char_roundtrip", back == 231);
+    // 在范围内不回绕
+    check("in_range", (100 as u8) as i64 == 100);
+    println("--- regress_narrow_cast done ---");
+}

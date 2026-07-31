@@ -1,3 +1,4 @@
+#include "safe.h"
 #include "parser.h"
 #include <string.h>
 #include <stdlib.h>
@@ -5,7 +6,7 @@
 
 void re0_parser_init(Re0Parser *p, Re0Arena *arena, Re0ErrorList *errors) {
     p->arena = arena; p->errors = errors; p->stream = NULL;
-    Re0StmtVec_init(&p->stmts); p->depth = 0; p->had_error = false;
+    Re0StmtVec_init(&p->stmts); p->depth = 0; p->had_error = false; p->had_any_error = false;
 }
 
 static Re0Token *peek(Re0Parser *p) { return re0_stream_peek(p->stream); }
@@ -23,12 +24,80 @@ static Re0Token expect(Re0Parser *p, Re0TokenKind k) {
 }
 
 static Re0Expr *parse_expr(Re0Parser *p);
+static Re0Expr *parse_prec(Re0Parser *p, int min_prec);
 static Re0Stmt *parse_stmt(Re0Parser *p);
 
 /* ── helper: advance and return the token's string value (for type names) ── */
+static const char *type_token_text(Re0TokenKind k, const char *str_val) {
+    if (k == TK_IDENT) return str_val;
+    if (k == TK_KW_MUT) return "mut";
+    switch (k) {
+        case TK_LESS: return "<";
+        case TK_GREATER: return ">";
+        case TK_LBRACKET: return "[";
+        case TK_RBRACKET: return "]";
+        case TK_LPAREN: return "(";
+        case TK_RPAREN: return ")";
+        case TK_COMMA: return ",";
+        case TK_SEMICOLON: return ";";
+        case TK_AMPERSAND: return "&";
+        case TK_ARROW: return "->";
+        default: return NULL;
+    }
+}
+
 static char *parse_type_name(Re0Parser *p) {
-    Re0Token t = advance(p);
-    return t.str_val ? re0_arena_strdup(p->arena, t.str_val) : re0_arena_strdup(p->arena, "unknown");
+    Re0Token *first = peek(p);
+    if (!first || first->kind == TK_EOF || first->kind == TK_ERROR)
+        return re0_arena_strdup(p->arena, "unknown");
+    Re0TokenKind fk = first->kind;
+    const char *p0 = type_token_text(fk, first->str_val);
+    if (!p0) {
+        Re0Token t = advance(p);
+        return t.str_val ? re0_arena_strdup(p->arena, t.str_val) : re0_arena_strdup(p->arena, "unknown");
+    }
+    char *buf = (char*)re0_arena_alloc(p->arena, 256);
+    size_t len = strlen(p0);
+    if (len >= 256) len = 255;
+    memcpy(buf, p0, len);
+    advance(p);
+    if (fk == TK_IDENT) {
+        Re0Token *nxt = peek(p);
+        if (!nxt || (nxt->kind != TK_LESS && nxt->kind != TK_LBRACKET)) {
+            buf[len] = '\0';
+            return buf;
+        }
+    }
+    int depth = (fk == TK_LESS || fk == TK_LBRACKET || fk == TK_LPAREN) ? 1 : 0;
+    while (len < 255) {
+        Re0Token *t = peek(p);
+        if (!t || t->kind == TK_EOF || t->kind == TK_ERROR) break;
+        if (depth == 0) {
+            if (t->kind == TK_COMMA || t->kind == TK_RPAREN || t->kind == TK_RBRACE ||
+                t->kind == TK_SEMICOLON || t->kind == TK_EQUAL || t->kind == TK_LBRACE ||
+                t->kind == TK_GREATER || t->kind == TK_RBRACKET || t->kind == TK_DOUBLEDOT)
+                break;
+        }
+        const char *piece = type_token_text(t->kind, t->str_val);
+        char numbuf[32];
+        if (!piece && t->kind == TK_NUMBER) {
+            snprintf(numbuf, sizeof(numbuf), "%lld", (long long)t->int_val);
+            piece = numbuf;
+        } else if (!piece && t->kind == TK_FLOAT) {
+            snprintf(numbuf, sizeof(numbuf), "%g", t->float_val);
+            piece = numbuf;
+        }
+        if (!piece) break;
+        size_t pl = strlen(piece);
+        if (len + pl + 1 < 256) { buf[len++] = ' '; memcpy(buf + len, piece, pl); len += pl; }
+        else break;
+        if (t->kind == TK_LESS || t->kind == TK_LBRACKET || t->kind == TK_LPAREN) depth++;
+        else if (t->kind == TK_GREATER || t->kind == TK_RBRACKET || t->kind == TK_RPAREN) depth--;
+        advance(p);
+        if (depth < 0) break;
+    }
+    buf[len] = '\0';
+    return buf;
 }
 
 static Re0Expr *expr_ident(Re0Parser *p) {
@@ -125,13 +194,13 @@ static Re0Expr *expr_lambda(Re0Parser *p) {
     e->lambda.param_count = 0; e->lambda.params = NULL;
     if (!check(p, TK_PIPE)) {
         e->lambda.param_count = 1;
-        e->lambda.params = (void*)calloc(1, sizeof(e->lambda.params[0]));
+        e->lambda.params = (void*)xcalloc(1, sizeof(e->lambda.params[0]));
         e->lambda.params[0].name = re0_arena_strdup(p->arena, advance(p).str_val);
         e->lambda.params[0].type = NULL;
         if (check(p, TK_COLON)) { advance(p); e->lambda.params[0].type = re0_arena_strdup(p->arena, parse_type_name(p)); }
         while (check(p, TK_COMMA)) {
             advance(p); e->lambda.param_count++;
-            e->lambda.params = (void*)realloc(e->lambda.params, sizeof(e->lambda.params[0]) * (size_t)e->lambda.param_count);
+            e->lambda.params = (void*)xrealloc(e->lambda.params, sizeof(e->lambda.params[0]) * (size_t)e->lambda.param_count);
             Re0Token pn = advance(p);
             e->lambda.params[e->lambda.param_count - 1].name = re0_arena_strdup(p->arena, pn.str_val);
             e->lambda.params[e->lambda.param_count - 1].type = NULL;
@@ -145,7 +214,7 @@ static Re0Expr *expr_lambda(Re0Parser *p) {
 static Re0Expr *parse_struct_init(Re0Parser *p, const char *name, Re0Span span) {
     expect(p, TK_LBRACE);
     Re0StructFieldInit *fields = NULL; int field_count = 0;
-    fields = (Re0StructFieldInit*)calloc(32, sizeof(Re0StructFieldInit));
+    fields = (Re0StructFieldInit*)xcalloc(32, sizeof(Re0StructFieldInit));
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
         Re0Token fname = expect(p, TK_IDENT);
         Re0Expr *val = NULL;
@@ -170,7 +239,7 @@ static Re0Expr *parse_match_expr(Re0Parser *p) {
     Re0Expr *scrutinee = parse_expr(p);
     expect(p, TK_LBRACE);
     Re0MatchArm *arms = NULL; int arm_count = 0;
-    arms = (Re0MatchArm*)calloc(32, sizeof(Re0MatchArm));
+    arms = (Re0MatchArm*)xcalloc(32, sizeof(Re0MatchArm));
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
         Re0Expr *pat = parse_expr(p);
         expect(p, TK_FATARROW);
@@ -244,20 +313,20 @@ static Re0Expr *parse_primary(Re0Parser *p) {
         Re0Expr *call = re0_expr_make(EXPR_CALL, span);
         call->call.callee = re0_expr_make(EXPR_IDENT, span);
         call->call.callee->ident.name = re0_arena_strdup(p->arena, "__reo_await");
-        Re0Expr **args = (Re0Expr**)calloc(1, sizeof(Re0Expr*));
+        Re0Expr **args = (Re0Expr**)xcalloc(1, sizeof(Re0Expr*));
         args[0] = inner;
         call->call.args = args; call->call.arg_count = 1;
         return call;
     }
-    if (check(p, TK_MINUS) || check(p, TK_BANG) || check(p, TK_AMPERSAND) || check(p, TK_STAR)) {
+    if (check(p, TK_MINUS) || check(p, TK_BANG) || check(p, TK_AMPERSAND) || check(p, TK_STAR) || check(p, TK_TILDE)) {
         Re0Token op_token = advance(p); Re0Expr *e = re0_expr_make(EXPR_UNARY, op_token.span);
         bool ref_mut = false;
         if (op_token.kind == TK_AMPERSAND && check(p, TK_KW_MUT)) {
             advance(p);
             ref_mut = true;
         }
-        e->unary.operand = parse_primary(p);
-        switch (op_token.kind) { case TK_MINUS: e->unary.op = UNOP_NEG; break; case TK_BANG: e->unary.op = UNOP_NOT; break; case TK_AMPERSAND: e->unary.op = ref_mut ? UNOP_REFMUT : UNOP_REF; break; case TK_STAR: e->unary.op = UNOP_DEREF; break; default: break; }
+        e->unary.operand = parse_prec(p, 100);
+        switch (op_token.kind) { case TK_MINUS: e->unary.op = UNOP_NEG; break; case TK_BANG: e->unary.op = UNOP_NOT; break; case TK_TILDE: e->unary.op = UNOP_BNOT; break; case TK_AMPERSAND: e->unary.op = ref_mut ? UNOP_REFMUT : UNOP_REF; break; case TK_STAR: e->unary.op = UNOP_DEREF; break; default: break; }
         return e;
     }
     Re0Token *t = peek(p);
@@ -268,11 +337,18 @@ static Re0Expr *parse_primary(Re0Parser *p) {
 }
 
 static Re0BinOpKind token_to_binop(Re0TokenKind k) {
-    switch (k) { case TK_PLUS: return BINOP_ADD; case TK_MINUS: return BINOP_SUB; case TK_STAR: return BINOP_MUL; case TK_SLASH: return BINOP_DIV; case TK_PERCENT: return BINOP_MOD; case TK_DOUBLEEQUAL: return BINOP_EQ; case TK_BANGEQUAL: return BINOP_NE; case TK_LESS: return BINOP_LT; case TK_LESSEQUAL: return BINOP_LE; case TK_GREATER: return BINOP_GT; case TK_GREATEREQUAL: return BINOP_GE; case TK_DOUBLEAMPERSAND: case TK_AMPERSAND: return BINOP_AND; case TK_DOUBLEPIPE: case TK_PIPE: return BINOP_OR;     case TK_DOUBLEDOT: return BINOP_RANGE; case TK_LEFTSHIFT: return BINOP_SHL; case TK_RIGHTSHIFT: return BINOP_SHR; default: return BINOP_ADD; }
+    switch (k) { case TK_PLUS: return BINOP_ADD; case TK_MINUS: return BINOP_SUB; case TK_STAR: return BINOP_MUL; case TK_SLASH: return BINOP_DIV; case TK_PERCENT: return BINOP_MOD; case TK_DOUBLEEQUAL: return BINOP_EQ; case TK_BANGEQUAL: return BINOP_NE; case TK_LESS: return BINOP_LT; case TK_LESSEQUAL: return BINOP_LE; case TK_GREATER: return BINOP_GT; case TK_GREATEREQUAL: return BINOP_GE; case TK_DOUBLEAMPERSAND: return BINOP_AND; case TK_AMPERSAND: return BINOP_BAND; case TK_DOUBLEPIPE: return BINOP_OR; case TK_PIPE: return BINOP_BOR; case TK_CARET: return BINOP_BXOR; case TK_DOUBLEDOT: return BINOP_RANGE; case TK_LEFTSHIFT: return BINOP_SHL; case TK_RIGHTSHIFT: return BINOP_SHR; default: return BINOP_ADD; }
 }
 
 static Re0Expr *parse_prec(Re0Parser *p, int min_prec) {
     p->depth++;
+    if (p->depth > RE0_MAX_PARSE_DEPTH) {
+        re0_error_append(p->errors, RE0_ERR_SYNTAX, RE0_SPAN_ZERO, NULL,
+                         "expression nesting too deep (limit %d)", RE0_MAX_PARSE_DEPTH);
+        p->had_error = true;
+        p->depth--;
+        return re0_expr_make(EXPR_INT, RE0_SPAN_ZERO);
+    }
     Re0Expr *left = parse_primary(p);
     for (;;) {
         if (check(p, TK_LPAREN)) { advance(p); Re0ExprVec args; Re0ExprVec_init(&args);
@@ -291,6 +367,14 @@ static Re0Expr *parse_prec(Re0Parser *p, int min_prec) {
             Re0Expr *t = re0_expr_make(EXPR_TRY, left->span);
             t->try_.inner = left; left = t; continue;
         }
+        if (check(p, TK_KW_AS)) {
+            advance(p);
+            char *type_name = parse_type_name(p);
+            Re0Expr *cast = re0_expr_make(EXPR_CAST, left->span);
+            cast->cast.inner = left;
+            cast->cast.target_type = type_name;
+            left = cast; continue;
+        }
         /* pipeline: a |> f(b) → f(a, b); a |> f → f(a) */
         if (min_prec == 0 && check(p, TK_PIPEARROW)) {
             advance(p);
@@ -298,7 +382,7 @@ static Re0Expr *parse_prec(Re0Parser *p, int min_prec) {
             if (right && right->kind == EXPR_CALL) {
                 /* 在参数列表首位插入 left */
                 int n = right->call.arg_count;
-                Re0Expr **new_args = (Re0Expr**)calloc((size_t)n + 1, sizeof(Re0Expr*));
+                Re0Expr **new_args = (Re0Expr**)xcalloc((size_t)n + 1, sizeof(Re0Expr*));
                 new_args[0] = left;
                 for (int i = 0; i < n; i++) new_args[i + 1] = right->call.args[i];
                 right->call.args = new_args;
@@ -307,7 +391,7 @@ static Re0Expr *parse_prec(Re0Parser *p, int min_prec) {
             } else if (right) {
                 Re0Expr *call = re0_expr_make(EXPR_CALL, left->span);
                 call->call.callee = right;
-                Re0Expr **args = (Re0Expr**)calloc(1, sizeof(Re0Expr*));
+                Re0Expr **args = (Re0Expr**)xcalloc(1, sizeof(Re0Expr*));
                 args[0] = left;
                 call->call.args = args;
                 call->call.arg_count = 1;
@@ -317,8 +401,10 @@ static Re0Expr *parse_prec(Re0Parser *p, int min_prec) {
         }
         Re0Token *t = peek(p); if (!t || !re0_token_is_binop(t->kind)) break;
         if (t->kind == TK_DOT || t->kind == TK_LBRACKET || t->kind == TK_LPAREN) break;
+        if (t->kind == TK_EQUAL || t->kind == TK_PLUSEQUAL || t->kind == TK_MINUSEQUAL ||
+            t->kind == TK_STAREQUAL || t->kind == TK_SLASHEQUAL) break;
         int prec = re0_token_binop_precedence(t->kind); if (prec < min_prec) break;
-        advance(p); Re0Expr *right = parse_prec(p, prec);
+        advance(p); Re0Expr *right = parse_prec(p, prec + 1);
         Re0Expr *bin = re0_expr_make(EXPR_BINARY, left->span);
         bin->binary.op = token_to_binop(t->kind); bin->binary.left = left; bin->binary.right = right; left = bin;
     }
@@ -367,7 +453,8 @@ static Re0Stmt *parse_assign(Re0Parser *p) {
 static Re0Stmt *parse_return(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     Re0Expr *val = NULL; if (!check(p, TK_SEMICOLON) && !check(p, TK_RBRACE)) val = parse_expr(p);
-    if (check(p, TK_SEMICOLON)) advance(p); Re0Stmt *s = re0_stmt_make(STMT_RETURN, span);
+    if (check(p, TK_SEMICOLON)) advance(p);
+    Re0Stmt *s = re0_stmt_make(STMT_RETURN, span);
     s->return_stmt.value = val; return s;
 }
 
@@ -378,12 +465,17 @@ static Re0Stmt *parse_if_stmt(Re0Parser *p) {
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) Re0StmtVec_push(&body, parse_stmt(p));
     expect(p, TK_RBRACE);
     Re0Stmt *s = re0_stmt_make(STMT_IF, span);
-    s->if_stmt.branches = (void*)calloc(1, sizeof(s->if_stmt.branches[0]));
+    s->if_stmt.branches = (void*)xcalloc(1, sizeof(s->if_stmt.branches[0]));
     s->if_stmt.branches[0].cond = cond; s->if_stmt.branches[0].body = body.data; s->if_stmt.branches[0].body_count = (int)Re0StmtVec_len(&body);
     s->if_stmt.branch_count = 1; s->if_stmt.else_body = NULL; s->if_stmt.else_count = 0;
     if (check(p, TK_KW_ELSE)) {
         advance(p);
-        if (check(p, TK_LBRACE)) {
+        /* else if → 递归解析为嵌套 STMT_IF */
+        if (check(p, TK_KW_IF)) {
+            s->if_stmt.else_body = (void*)xcalloc(1, sizeof(Re0Stmt*));
+            s->if_stmt.else_body[0] = parse_if_stmt(p);
+            s->if_stmt.else_count = 1;
+        } else if (check(p, TK_LBRACE)) {
             expect(p, TK_LBRACE); Re0StmtVec eb; Re0StmtVec_init(&eb);
             while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) Re0StmtVec_push(&eb, parse_stmt(p));
             expect(p, TK_RBRACE);
@@ -420,13 +512,13 @@ static Re0Stmt *parse_fn(Re0Parser *p) {
     Re0Token name = expect(p, TK_IDENT);
     char **type_params = NULL; int tp_count = 0;
     if (check(p, TK_LESS)) { advance(p);
-        type_params = (void*)calloc(8, sizeof(char*));
+        type_params = (void*)xcalloc(8, sizeof(char*));
         if (peek(p) && peek(p)->kind == TK_IDENT) { type_params[tp_count++] = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p); }
         expect(p, TK_GREATER);
     }
     expect(p, TK_LPAREN);
     Re0FnParam *params = NULL; int param_count = 0;
-    params = (Re0FnParam*)calloc(32, sizeof(Re0FnParam));
+    params = (Re0FnParam*)xcalloc(32, sizeof(Re0FnParam));
     if (!check(p, TK_RPAREN)) {
         Re0Token pname = advance(p); /* accept IDENT or TK_KW_SELF */
         params[param_count].name = re0_arena_strdup(p->arena, pname.kind == TK_KW_SELF ? "self" : (pname.str_val ? pname.str_val : ""));
@@ -468,12 +560,12 @@ static Re0Stmt *parse_fn(Re0Parser *p) {
 static Re0Stmt *parse_extern(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p); expect(p, TK_LBRACE);
     Re0ExternFnDecl *funcs = NULL; int func_count = 0;
-    funcs = (Re0ExternFnDecl*)calloc(32, sizeof(Re0ExternFnDecl));
+    funcs = (Re0ExternFnDecl*)xcalloc(32, sizeof(Re0ExternFnDecl));
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
         expect(p, TK_KW_FN); Re0Token nm = expect(p, TK_IDENT);
         funcs[func_count].name = re0_arena_strdup(p->arena, nm.str_val);
         expect(p, TK_LPAREN);
-        funcs[func_count].params = (Re0FnCallParam*)calloc(16, sizeof(Re0FnCallParam));
+        funcs[func_count].params = (Re0FnCallParam*)xcalloc(16, sizeof(Re0FnCallParam));
         int pc = 0;
         if (check(p, TK_ELLIPSIS)) {
             advance(p);
@@ -511,7 +603,7 @@ static Re0Stmt *parse_import(Re0Parser *p) {
         mod_name = re0_arena_strdup(p->arena, mod.str_val);
     }
     char **items = NULL; int ic = 0;
-    if (check(p, TK_LBRACE)) { advance(p); items = (void*)calloc(64, sizeof(char*));
+    if (check(p, TK_LBRACE)) { advance(p); items = (void*)xcalloc(64, sizeof(char*));
         if (peek(p) && peek(p)->kind == TK_IDENT) { items[ic++] = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p); }
         while (check(p, TK_COMMA)) { advance(p); items[ic++] = re0_arena_strdup(p->arena, expect(p, TK_IDENT).str_val); }
         expect(p, TK_RBRACE);
@@ -529,13 +621,13 @@ static Re0Stmt *parse_struct(Re0Parser *p) {
     Re0Token nm = expect(p, TK_IDENT);
     char **type_params = NULL; int tp_count = 0;
     if (check(p, TK_LESS)) {
-        advance(p); type_params = (void*)calloc(8, sizeof(char*));
+        advance(p); type_params = (void*)xcalloc(8, sizeof(char*));
         if (peek(p) && peek(p)->kind == TK_IDENT) { type_params[tp_count++] = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p); }
         expect(p, TK_GREATER);
     }
     expect(p, TK_LBRACE);
     Re0StructFieldDecl *fields = NULL; int field_count = 0;
-    fields = (Re0StructFieldDecl*)calloc(32, sizeof(Re0StructFieldDecl));
+    fields = (Re0StructFieldDecl*)xcalloc(32, sizeof(Re0StructFieldDecl));
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
         Re0Token fname = expect(p, TK_IDENT);
         if (check(p, TK_COLON)) advance(p);
@@ -562,7 +654,7 @@ static Re0Stmt *parse_enum(Re0Parser *p) {
     Re0Token nm = expect(p, TK_IDENT);
     expect(p, TK_LBRACE);
     Re0EnumVariantDecl *variants = NULL; int variant_count = 0;
-    variants = (Re0EnumVariantDecl*)calloc(32, sizeof(Re0EnumVariantDecl));
+    variants = (Re0EnumVariantDecl*)xcalloc(32, sizeof(Re0EnumVariantDecl));
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
         Re0Token vname = expect(p, TK_IDENT);
         variants[variant_count].vname = re0_arena_strdup(p->arena, vname.str_val);
@@ -570,7 +662,7 @@ static Re0Stmt *parse_enum(Re0Parser *p) {
         variants[variant_count].type_count = 0;
         if (check(p, TK_LPAREN)) {
             advance(p);
-            variants[variant_count].types = (Re0Expr**)calloc(8, sizeof(Re0Expr*));
+            variants[variant_count].types = (Re0Expr**)xcalloc(8, sizeof(Re0Expr*));
             int tc = 0;
             if (!check(p, TK_RPAREN)) {
                 variants[variant_count].types[tc++] = parse_expr(p);
@@ -627,7 +719,7 @@ static Re0Stmt *parse_pub(Re0Parser *p) {
 static Re0Stmt *parse_trait(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     Re0Token nm = expect(p, TK_IDENT); expect(p, TK_LBRACE);
-    Re0TraitMethodDecl *methods = (Re0TraitMethodDecl*)calloc(32, sizeof(Re0TraitMethodDecl));
+    Re0TraitMethodDecl *methods = (Re0TraitMethodDecl*)xcalloc(32, sizeof(Re0TraitMethodDecl));
     int mc = 0;
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
         if (!check(p, TK_KW_FN)) break;
@@ -635,7 +727,7 @@ static Re0Stmt *parse_trait(Re0Parser *p) {
         Re0Token mname = expect(p, TK_IDENT);
         methods[mc].mname = re0_arena_strdup(p->arena, mname.str_val);
         expect(p, TK_LPAREN);
-        methods[mc].params = (Re0FnCallParam*)calloc(16, sizeof(Re0FnCallParam));
+        methods[mc].params = (Re0FnCallParam*)xcalloc(16, sizeof(Re0FnCallParam));
         int pc = 0;
         if (!check(p, TK_RPAREN)) {
             Re0Token pn = advance(p); /* accept IDENT or self */
@@ -661,7 +753,7 @@ static Re0Stmt *parse_trait(Re0Parser *p) {
 static Re0Stmt *parse_impl(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     char **type_params = NULL; int tp_count = 0;
-    if (check(p, TK_LESS)) { advance(p); type_params = (void*)calloc(8, sizeof(char*));
+    if (check(p, TK_LESS)) { advance(p); type_params = (void*)xcalloc(8, sizeof(char*));
         if (peek(p) && peek(p)->kind == TK_IDENT) { type_params[tp_count++] = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p); }
         expect(p, TK_GREATER); }
     Re0Token nm = expect(p, TK_IDENT);
@@ -704,7 +796,7 @@ static Re0Stmt *parse_module(Re0Parser *p) {
 static Re0Stmt *parse_component(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     Re0Token nm = expect(p, TK_IDENT); expect(p, TK_LBRACE);
-    Re0StructFieldDecl *state = (Re0StructFieldDecl*)calloc(32, sizeof(Re0StructFieldDecl));
+    Re0StructFieldDecl *state = (Re0StructFieldDecl*)xcalloc(32, sizeof(Re0StructFieldDecl));
     int sc = 0;
     Re0StmtVec methods; Re0StmtVec_init(&methods);
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
@@ -735,7 +827,7 @@ static Re0Stmt *parse_component(Re0Parser *p) {
 static Re0Stmt *parse_from_import(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p); /* 'from' */
     Re0Token mod = expect(p, TK_IDENT); expect(p, TK_LBRACE);
-    char **items = (void*)calloc(64, sizeof(char*)); int ic = 0;
+    char **items = (void*)xcalloc(64, sizeof(char*)); int ic = 0;
     if (peek(p) && peek(p)->kind == TK_IDENT) { items[ic++] = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p); }
     while (check(p, TK_COMMA)) { advance(p); items[ic++] = re0_arena_strdup(p->arena, expect(p, TK_IDENT).str_val); }
     expect(p, TK_RBRACE);
@@ -762,7 +854,12 @@ static Re0Stmt *parse_attribute(Re0Parser *p) {
 }
 
 static Re0Stmt *parse_stmt(Re0Parser *p) {
-    if (p->depth > RE0_MAX_PARSE_DEPTH) { p->had_error = true; return re0_stmt_make(STMT_EXPR, RE0_SPAN_ZERO); }
+    if (p->depth > RE0_MAX_PARSE_DEPTH) {
+        re0_error_append(p->errors, RE0_ERR_SYNTAX, RE0_SPAN_ZERO, NULL,
+                         "statement nesting too deep (limit %d)", RE0_MAX_PARSE_DEPTH);
+        p->had_error = true;
+        return re0_stmt_make(STMT_EXPR, RE0_SPAN_ZERO);
+    }
     if (check(p, TK_KW_LET)) return parse_let(p);
     if (check(p, TK_KW_CONST)) return parse_const(p);
     if (check(p, TK_KW_TYPE)) return parse_type_alias(p);
@@ -793,14 +890,15 @@ static Re0Stmt *parse_stmt(Re0Parser *p) {
     if (check(p, TK_KW_MODULE)) return parse_module(p);
     if (check(p, TK_KW_COMPONENT)) return parse_component(p);
     if (check(p, TK_AT)) return parse_attribute(p);
-    if (check(p, TK_IDENT) && p->stream->cursor + 1 < Re0TokenVec_len(&p->stream->tokens)) {
+    if ((check(p, TK_IDENT) || check(p, TK_KW_SELF)) &&
+        p->stream->cursor + 1 < Re0TokenVec_len(&p->stream->tokens)) {
         Re0Token *peek2 = &p->stream->tokens.data[p->stream->cursor + 1];
         /* 普通赋值: var = ... */
         if (peek2->kind == TK_EQUAL || peek2->kind == TK_PLUSEQUAL ||
             peek2->kind == TK_MINUSEQUAL || peek2->kind == TK_STAREQUAL ||
             peek2->kind == TK_SLASHEQUAL)
             return parse_assign(p);
-        /* 字段赋值: obj.field = ... （需要 3 token lookahead 确认 = 在 . 之后） */
+        /* 字段赋值: obj.field = ... / self.field = ...（3 token lookahead 确认 = 在 . 之后） */
         if (peek2->kind == TK_DOT && p->stream->cursor + 3 < Re0TokenVec_len(&p->stream->tokens)) {
             Re0Token *peek4 = &p->stream->tokens.data[p->stream->cursor + 3];
             if (peek4->kind == TK_EQUAL || peek4->kind == TK_PLUSEQUAL ||
@@ -809,22 +907,53 @@ static Re0Stmt *parse_stmt(Re0Parser *p) {
                 return parse_assign(p);
         }
     }
-    Re0Expr *e = parse_expr(p); if (check(p, TK_SEMICOLON)) advance(p);
+    Re0Expr *e = parse_expr(p);
+    if (e && e->kind == EXPR_INDEX &&
+        (check(p, TK_EQUAL) || check(p, TK_PLUSEQUAL) || check(p, TK_MINUSEQUAL) ||
+         check(p, TK_STAREQUAL) || check(p, TK_SLASHEQUAL))) {
+        Re0BinOpKind op = BINOP_ADD;
+        if (check(p, TK_EQUAL)) advance(p);
+        else if (check(p, TK_PLUSEQUAL)) { advance(p); op = BINOP_ADD; }
+        else if (check(p, TK_MINUSEQUAL)) { advance(p); op = BINOP_SUB; }
+        else if (check(p, TK_STAREQUAL)) { advance(p); op = BINOP_MUL; }
+        else if (check(p, TK_SLASHEQUAL)) { advance(p); op = BINOP_DIV; }
+        Re0Expr *val = parse_expr(p); if (check(p, TK_SEMICOLON)) advance(p);
+        Re0Stmt *s = re0_stmt_make(STMT_INDEX_ASSIGN, e->span);
+        s->index_assign.target = e->index.target;
+        s->index_assign.index = e->index.index;
+        s->index_assign.value = val; s->index_assign.op = op;
+        return s;
+    }
+    if (check(p, TK_SEMICOLON)) advance(p);
     Re0Stmt *s = re0_stmt_make(STMT_EXPR, e->span); s->expr_stmt.expr = e; return s;
 }
 
 bool re0_parser_parse(Re0Parser *p, Re0TokenStream *stream) {
-    p->stream = stream; p->depth = 0;
+    p->stream = stream; p->depth = 0; p->had_error = false; p->had_any_error = false;
     while (!re0_stream_eof(p->stream)) {
         Re0Token *t = peek(p); if (!t || t->kind == TK_EOF) break;
         size_t before = re0_stream_pos(p->stream);
         Re0Stmt *s = parse_stmt(p); if (s) Re0StmtVec_push(&p->stmts, s);
-        /* error recovery: ensure progress to prevent infinite loops */
+        /* error recovery: 同步到下一个语句边界 */
         if (re0_stream_pos(p->stream) == before) {
             advance(p); /* force-consume the stuck token */
         }
+        /* 如果解析出错，跳到下一个 `;` 或 `}` 恢复 */
+        if (p->had_error) {
+            p->had_any_error = true;
+            int skip = 0;
+            while (!re0_stream_eof(p->stream)) {
+                Re0Token *tok = peek(p);
+                if (!tok || tok->kind == TK_EOF) break;
+                if (tok->kind == TK_SEMICOLON && skip <= 0) { advance(p); break; }
+                if (tok->kind == TK_RBRACE && skip > 0) { skip--; }
+                if (tok->kind == TK_LBRACE) skip++;
+                advance(p);
+            }
+            p->had_error = false; /* 恢复，继续解析后续语句 */
+        }
     }
-    return !p->had_error;
+    return !p->had_any_error;
 }
 
 void re0_parser_destroy(Re0Parser *p) { Re0StmtVec_free(&p->stmts); p->stream = NULL; }
