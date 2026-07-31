@@ -1,22 +1,53 @@
+#include "safe.h"
 #include "sema.h"
 #include <stdlib.h>
 #include <string.h>
+#include "re0_limits.h"
 
-/* 解析类型名：先查标准类型，再查类型别名 */
+/* 解析类型名：标准类型 → 类型别名 → 具名 struct/enum（避免具名类型塌缩为 UNIT/UNKNOWN） */
 static Re0Type *resolve_type(Re0Sema *s, const char *name) {
     if (!name) return NULL;
     Re0Type *t = re0_model_std_type(name);
     if (t) return t;
     const char *resolved = re0_model_resolve_type_alias(s->model, name);
-    if (resolved) return re0_model_std_type(resolved);
+    if (resolved) {
+        Re0Type *rt = re0_model_std_type(resolved);
+        if (rt) return rt;
+        name = resolved; /* 别名指向具名类型时继续按具名解析 */
+    }
+    if (re0_model_find_struct(s->model, name))
+        return re0_type_make_named(RE0_TYPE_STRUCT, name, NULL);
+    if (re0_model_find_enum(s->model, name))
+        return re0_type_make_named(RE0_TYPE_ENUM, name, NULL);
     return NULL;
+}
+
+/* 类型可赋值性（from → to）：真类型校验。
+ * numeric 可宽转；UNKNOWN/TYPEVAR/NEVER/UNIT 目标宽容；其余须结构相等。 */
+static bool sema_assignable(Re0Type *from, Re0Type *to) {
+    if (!from || !to) return true;
+    if (from->kind == RE0_TYPE_UNKNOWN || to->kind == RE0_TYPE_UNKNOWN) return true;
+    if (from->kind == RE0_TYPE_TYPEVAR || to->kind == RE0_TYPE_TYPEVAR) return true;
+    if (from->kind == RE0_TYPE_NEVER) return true;
+    if (to->kind == RE0_TYPE_UNIT) return true;
+    return re0_type_coercible(from, to); /* equal 或 numeric 互转 */
+}
+
+static int sema_cap_count(Re0Sema *s, Re0Span span, int count, int limit, const char *what) {
+    if (count > limit) {
+        re0_error_append(s->errors, RE0_ERR_SEMANTIC, span, NULL,
+                         "too many %s (limit %d), extras ignored", what, limit);
+        return limit;
+    }
+    return count;
 }
 
 void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
                    Re0SemanticModel *model, Re0BuiltinRegistry *builtins) {
     s->arena = arena; s->errors = errors; s->model = model; s->builtins = builtins;
     s->global_scope = re0_scope_new(NULL); s->current_scope = s->global_scope;
-    Re0StmtVec_init(&s->checked); s->had_error = false;
+    Re0StmtVec_init(&s->checked); s->had_error = false; s->infer_depth = 0;
+    s->current_fn_return = NULL;
 
     /* 预注入 Option/Result 核心枚举 */
     if (!re0_model_find_enum(model, "Option")) {
@@ -31,7 +62,19 @@ void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
     }
 }
 
+static Re0Type *infer_type(Re0Sema *s, Re0Expr *e);
+static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e);
+
 static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
+    if (!e) return re0_type_make(RE0_TYPE_UNIT, NULL);
+    if (s->infer_depth > RE0_MAX_SEMA_DEPTH) return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+    s->infer_depth++;
+    Re0Type *t = infer_type_impl(s, e);
+    s->infer_depth--;
+    return t;
+}
+
+static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
     if (!e) return re0_type_make(RE0_TYPE_UNIT, NULL);
     switch (e->kind) {
         case EXPR_INT: return re0_type_make(RE0_TYPE_I64, NULL);
@@ -65,7 +108,23 @@ static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
             s->had_error = true;
             return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
         }
-        case EXPR_BINARY: return infer_type(s, e->binary.left);
+        case EXPR_BINARY: {
+            Re0Type *lt = infer_type(s, e->binary.left);
+            Re0Type *rt = infer_type(s, e->binary.right);
+            switch (e->binary.op) {
+                case BINOP_EQ: case BINOP_NE: case BINOP_LT:
+                case BINOP_LE: case BINOP_GT: case BINOP_GE:
+                case BINOP_AND: case BINOP_OR:
+                    return re0_type_make(RE0_TYPE_BOOL, NULL);
+                case BINOP_RANGE:
+                    return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                default:
+                    /* 算术/位运算：返回左操作数类型（左未知时用右），保持宽容 */
+                    if (lt && lt->kind != RE0_TYPE_UNKNOWN) return lt;
+                    if (rt) return rt;
+                    return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+            }
+        }
         case EXPR_UNARY: {
             Re0Type *operand = infer_type(s, e->unary.operand);
             if (!operand) return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
@@ -122,9 +181,16 @@ static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
                 if (obj_ty && obj_ty->kind == RE0_TYPE_STRUCT && obj_ty->named.name) {
                     const char *mangled = re0_model_lookup_method(
                         s->model, obj_ty->named.name, sel->select.field);
-                    if (mangled)
-                        return re0_type_make(RE0_TYPE_I64, NULL);
+                    if (mangled) {
+                        /* 查 mangled 符号的 FN 类型以取真实返回类型 */
+                        Re0Symbol *msym = re0_scope_lookup(s->global_scope, mangled);
+                        if (msym && msym->type && msym->type->kind == RE0_TYPE_FN &&
+                            msym->type->func.ret)
+                            return msym->type->func.ret;
+                        return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    }
                 }
+                return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
             }
             /* 枚举构造器: Enum::Variant(args) */
             if (e->call.callee->kind == EXPR_IDENT &&
@@ -151,9 +217,9 @@ static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
             if (e->call.callee->kind == EXPR_IDENT) {
                 Re0BuiltinFn *bf = re0_builtin_lookup(s->builtins, e->call.callee->ident.name);
                 if (bf) return bf->ret_type;
-                /* check if it's a user-defined function */
-                Re0Symbol *sym = re0_scope_lookup(s->global_scope, e->call.callee->ident.name);
-                if (sym && sym->is_function && sym->type && sym->type->kind == RE0_TYPE_FN) {
+                /* 用户函数 / 局部 lambda：按 FN 类型解析（current_scope 链至 global） */
+                Re0Symbol *sym = re0_scope_lookup(s->current_scope, e->call.callee->ident.name);
+                if (sym && sym->type && sym->type->kind == RE0_TYPE_FN) {
                     int fixed_params = sym->type->func.param_count;
                     if ((!sym->type->func.variadic && e->call.arg_count != fixed_params) ||
                         (sym->type->func.variadic && e->call.arg_count < fixed_params)) {
@@ -164,7 +230,23 @@ static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
                                          e->call.arg_count);
                         s->had_error = true;
                     }
-                    return sym->type->func.ret;
+                    /* B4: 逐参类型校验（TYPEVAR/UNKNOWN 宽容） */
+                    for (int ai = 0; ai < e->call.arg_count &&
+                                    ai < sym->type->func.param_count; ai++) {
+                        Re0Type *at = infer_type(s, e->call.args[ai]);
+                        Re0Type *pt = sym->type->func.params[ai];
+                        if (at && pt && !sema_assignable(at, pt)) {
+                            re0_error_append(s->errors, RE0_ERR_SEMANTIC,
+                                             e->call.callee->span, NULL,
+                                             "argument %d of '%s': expected '%s', got '%s'",
+                                             ai + 1, e->call.callee->ident.name,
+                                             re0_type_kind_name(pt->kind),
+                                             re0_type_kind_name(at->kind));
+                            s->had_error = true;
+                        }
+                    }
+                    return sym->type->func.ret
+                        ? sym->type->func.ret : re0_type_make(RE0_TYPE_UNKNOWN, NULL);
                 }
                 re0_error_append(s->errors, RE0_ERR_SEMANTIC,
                                 e->call.callee->span, NULL,
@@ -187,25 +269,100 @@ static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
             if (e->match_.arm_count > 0) return infer_type(s, e->match_.arms[0].body);
             return re0_type_make(RE0_TYPE_UNIT, NULL);
         case EXPR_SELECT: {
-            /* field access on struct variable */
+            /* 字段访问：返回字段真实类型（仅具体类型；泛型/未知落 UNKNOWN，保持宽容） */
             Re0Type *obj_type = infer_type(s, e->select.object);
-            if (obj_type && obj_type->kind == RE0_TYPE_UNKNOWN) {
-                re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
-                                "cannot access field '%s' on unknown type", e->select.field);
-                s->had_error = true;
+            if (obj_type && obj_type->kind == RE0_TYPE_STRUCT && obj_type->named.name) {
+                Re0StructDef *sd = re0_model_find_struct(s->model, obj_type->named.name);
+                if (sd) {
+                    for (int i = 0; i < sd->field_count; i++) {
+                        if (strcmp(sd->fields[i].name, e->select.field) == 0) {
+                            Re0Type *ft = sd->fields[i].type;
+                            if (ft && ft->kind != RE0_TYPE_TYPEVAR &&
+                                ft->kind != RE0_TYPE_UNKNOWN)
+                                return ft;
+                            return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                        }
+                    }
+                }
             }
-            return re0_type_make(RE0_TYPE_I64, NULL);
+            return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
         }
-        case EXPR_INDEX:
-            return re0_type_make(RE0_TYPE_I64, NULL);
+        case EXPR_INDEX: {
+            /* 索引：按集合类型推元素类型 */
+            Re0Type *obj = infer_type(s, e->index.target);
+            if (e->index.index) infer_type(s, e->index.index);
+            if (obj) {
+                switch (obj->kind) {
+                    case RE0_TYPE_ARRAY:
+                        return obj->array.inner ? obj->array.inner
+                                                : re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    case RE0_TYPE_SLICE:
+                        return obj->slice.inner ? obj->slice.inner
+                                                : re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    case RE0_TYPE_VEC:
+                        return obj->vec.inner ? obj->vec.inner
+                                              : re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    case RE0_TYPE_STR:
+                        return re0_type_make(RE0_TYPE_CHAR, NULL);
+                    default: break;
+                }
+            }
+            return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+        }
+        case EXPR_ARRAY: {
+            /* 数组字面量：逐元素推断，取首个具体类型为元素类型 */
+            if (e->array.count == 0)
+                return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+            Re0Type *elem = NULL;
+            for (int i = 0; i < e->array.count; i++) {
+                Re0Type *t = infer_type(s, e->array.elems[i]);
+                if (t && t->kind != RE0_TYPE_UNKNOWN) { elem = t; break; }
+            }
+            if (!elem) elem = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+            return re0_type_make_array(elem, (size_t)e->array.count, NULL);
+        }
+        case EXPR_ARRAY_REPEAT: {
+            /* [value; count]：count 为整型字面量时定长数组，否则切片 */
+            Re0Type *elem = infer_type(s, e->array_repeat.value);
+            if (!elem) elem = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+            if (e->array_repeat.count && e->array_repeat.count->kind == EXPR_INT &&
+                e->array_repeat.count->int_lit.val >= 0)
+                return re0_type_make_array(elem,
+                            (size_t)e->array_repeat.count->int_lit.val, NULL);
+            return re0_type_make_slice(elem, NULL);
+        }
+        case EXPR_TUPLE: {
+            Re0Type *elems[64];
+            int n = e->tuple.count > 64 ? 64 : e->tuple.count;
+            for (int i = 0; i < n; i++) {
+                Re0Type *t = infer_type(s, e->tuple.elems[i]);
+                elems[i] = t ? t : re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+            }
+            return re0_type_make_tuple(elems, n, NULL);
+        }
         case EXPR_TRY: {
             /* expr? — 检查内部类型，返回 payload 类型（MVP: i64） */
             if (e->try_.inner) infer_type(s, e->try_.inner);
             return re0_type_make(RE0_TYPE_I64, NULL);
         }
-        case EXPR_LAMBDA:
-            /* lambda: 开子作用域绑定参数，推断返回类型 */
-            return re0_type_make(RE0_TYPE_I64, NULL);
+        case EXPR_LAMBDA: {
+            /* lambda: 开子作用域绑定参数，推断 Fn(params, ret) */
+            Re0Scope *saved = s->current_scope;
+            s->current_scope = re0_scope_new(s->current_scope);
+            Re0Type *params[64];
+            int pc = e->lambda.param_count > 64 ? 64 : e->lambda.param_count;
+            for (int i = 0; i < pc; i++) {
+                Re0Type *pt = e->lambda.params[i].type
+                    ? resolve_type(s, e->lambda.params[i].type) : NULL;
+                if (!pt) pt = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                params[i] = pt;
+                re0_scope_define(s->current_scope, e->lambda.params[i].name, pt, false);
+            }
+            Re0Type *ret = e->lambda.body
+                ? infer_type(s, e->lambda.body) : re0_type_make(RE0_TYPE_UNIT, NULL);
+            s->current_scope = saved;
+            return re0_type_make_func(params, pc, ret, false, NULL);
+        }
         default: return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
     }
 }
@@ -221,9 +378,17 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                 s->had_error = true;
                 break;
             }
-            Re0Type *type = NULL;
-            if (stmt->let_stmt.type) type = resolve_type(s, stmt->let_stmt.type);
-            if (stmt->let_stmt.init) type = type ? type : infer_type(s, stmt->let_stmt.init);
+            Re0Type *anno = stmt->let_stmt.type ? resolve_type(s, stmt->let_stmt.type) : NULL;
+            Re0Type *init_ty = stmt->let_stmt.init ? infer_type(s, stmt->let_stmt.init) : NULL;
+            /* B1: 注解 vs 初始化类型校验 */
+            if (anno && init_ty && !sema_assignable(init_ty, anno)) {
+                re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                "type mismatch: '%s' annotated '%s' but initializer is '%s'",
+                                stmt->let_stmt.name, re0_type_kind_name(anno->kind),
+                                re0_type_kind_name(init_ty->kind));
+                s->had_error = true;
+            }
+            Re0Type *type = anno ? anno : init_ty;
             if (!type) type = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
             re0_scope_define(s->current_scope, stmt->let_stmt.name, type, true);
             break;
@@ -236,7 +401,17 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                                 "assignment to undefined variable '%s'", stmt->assign.name);
                 s->had_error = true;
             }
-            if (stmt->assign.value) infer_type(s, stmt->assign.value);
+            if (stmt->assign.value) {
+                Re0Type *vt = infer_type(s, stmt->assign.value);
+                /* B2: 赋值类型校验 */
+                if (sym && sym->type && vt && !sema_assignable(vt, sym->type)) {
+                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                    "assignment type mismatch: '%s' is '%s', got '%s'",
+                                    stmt->assign.name, re0_type_kind_name(sym->type->kind),
+                                    re0_type_kind_name(vt->kind));
+                    s->had_error = true;
+                }
+            }
             break;
         }
         case STMT_EXPR:
@@ -268,16 +443,46 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
         case STMT_FOR: {
             Re0Scope *saved = s->current_scope;
             s->current_scope = re0_scope_new(s->current_scope);
-            re0_scope_define(s->current_scope, stmt->for_stmt.var,
-                           re0_type_make(RE0_TYPE_I64, NULL), true);
-            infer_type(s, stmt->for_stmt.iter);
+            /* 按迭代器推循环变量类型：range→i64，Vec/Array/Slice→元素，str→char，其余→i64 */
+            Re0Expr *iter = stmt->for_stmt.iter;
+            Re0Type *iter_ty = iter ? infer_type(s, iter) : NULL;
+            Re0Type *var_ty = NULL;
+            if (iter && iter->kind == EXPR_BINARY && iter->binary.op == BINOP_RANGE) {
+                var_ty = re0_type_make(RE0_TYPE_I64, NULL);
+            } else if (iter_ty) {
+                switch (iter_ty->kind) {
+                    case RE0_TYPE_ARRAY:
+                        var_ty = iter_ty->array.inner; break;
+                    case RE0_TYPE_SLICE:
+                        var_ty = iter_ty->slice.inner; break;
+                    case RE0_TYPE_VEC:
+                        var_ty = iter_ty->vec.inner; break;
+                    case RE0_TYPE_STR:
+                        var_ty = re0_type_make(RE0_TYPE_CHAR, NULL); break;
+                    default:
+                        var_ty = re0_type_make(RE0_TYPE_I64, NULL); break;
+                }
+            }
+            if (!var_ty) var_ty = re0_type_make(RE0_TYPE_I64, NULL);
+            re0_scope_define(s->current_scope, stmt->for_stmt.var, var_ty, true);
             for (int i = 0; i < stmt->for_stmt.body_count; i++)
                 check_stmt_inner(s, stmt->for_stmt.body[i]);
             s->current_scope = saved;
             break;
         }
         case STMT_RETURN:
-            if (stmt->return_stmt.value) infer_type(s, stmt->return_stmt.value);
+            if (stmt->return_stmt.value) {
+                Re0Type *vt = infer_type(s, stmt->return_stmt.value);
+                /* B3: 返回类型校验（对照当前函数返回类型） */
+                if (s->current_fn_return && vt &&
+                    !sema_assignable(vt, s->current_fn_return)) {
+                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                    "return type mismatch: expected '%s', got '%s'",
+                                    re0_type_kind_name(s->current_fn_return->kind),
+                                    re0_type_kind_name(vt->kind));
+                    s->had_error = true;
+                }
+            }
             break;
         case STMT_FUNCTION: {
             /* check for duplicate function definition */
@@ -290,7 +495,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             Re0Scope *saved = s->current_scope;
             Re0Type *params[64];
             int param_count = stmt->function.param_count;
-            if (param_count > 64) param_count = 64;
+            param_count = sema_cap_count(s, stmt->span, param_count, 64, "parameters");
             for (int i = 0; i < param_count; i++) {
                 params[i] = resolve_type(s, stmt->function.params[i].ptype);
                 if (!params[i]) params[i] = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
@@ -326,15 +531,18 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                 if (!pt) pt = re0_type_make(RE0_TYPE_I64, NULL);
                 re0_scope_define(s->current_scope, stmt->function.params[i].name, pt, false);
             }
+            Re0Type *prev_fn_return = s->current_fn_return;
+            s->current_fn_return = ret;
             for (int i = 0; i < stmt->function.body_count; i++)
                 check_stmt_inner(s, stmt->function.body[i]);
+            s->current_fn_return = prev_fn_return;
             s->current_scope = saved;
             break;
         }
         case STMT_STRUCT: {
             char *field_names[64], *field_types[64];
             int n = stmt->struct_decl.field_count;
-            if (n > 64) n = 64;
+            n = sema_cap_count(s, stmt->span, n, 64, "struct fields");
             for (int i = 0; i < n; i++) {
                 field_names[i] = stmt->struct_decl.fields[i].name;
                 field_types[i] = stmt->struct_decl.fields[i].type;
@@ -346,7 +554,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
         case STMT_ENUM: {
             char *vnames[64]; int has_payload[64];
             int n = stmt->enum_decl.variant_count;
-            if (n > 64) n = 64;
+            n = sema_cap_count(s, stmt->span, n, 64, "enum variants");
             for (int i = 0; i < n; i++) {
                 vnames[i] = stmt->enum_decl.variants[i].vname;
                 has_payload[i] = stmt->enum_decl.variants[i].type_count > 0 ? 1 : 0;
@@ -367,7 +575,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
 
                 Re0Type *params[64];
                 int param_count = decl->param_count;
-                if (param_count > 64) param_count = 64;
+                param_count = sema_cap_count(s, stmt->span, param_count, 64, "parameters");
                 for (int j = 0; j < param_count; j++) {
                     params[j] = re0_model_std_type(decl->params[j].ptype);
                     if (!params[j]) params[j] = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
@@ -402,7 +610,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             break;
         }
         case STMT_TRAIT: {
-            Re0TraitMethod *tms = (Re0TraitMethod*)calloc(
+            Re0TraitMethod *tms = (Re0TraitMethod*)xcalloc(
                 (size_t)(stmt->trait_decl.method_count > 0 ? stmt->trait_decl.method_count : 1),
                 sizeof(Re0TraitMethod));
             for (int i = 0; i < stmt->trait_decl.method_count; i++) {
@@ -411,7 +619,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                 tms[i].param_count = d->param_count;
                 tms[i].ret_type = d->ret_type;
                 if (d->param_count > 0) {
-                    tms[i].param_types = (char**)calloc((size_t)d->param_count, sizeof(char*));
+                    tms[i].param_types = (char**)xcalloc((size_t)d->param_count, sizeof(char*));
                     for (int j = 0; j < d->param_count; j++)
                         tms[i].param_types[j] = d->params[j].ptype;
                 }
@@ -453,12 +661,13 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             for (int i = 0; i < stmt->impl.method_count; i++) {
                 Re0Stmt *m = stmt->impl.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
-                const char *mangled = re0_model_method_symbol(tn, sn, m->function.name);
+                char mangled_buf[256];
+                const char *mangled = re0_model_method_symbol(tn, sn, m->function.name, mangled_buf, sizeof(mangled_buf));
                 re0_model_register_method(s->model, sn, m->function.name, mangled);
                 if (!re0_scope_lookup_local(s->global_scope, mangled)) {
                     Re0Type *params[64];
                     int pc = m->function.param_count;
-                    if (pc > 64) pc = 64;
+                    pc = sema_cap_count(s, stmt->span, pc, 64, "parameters");
                     for (int j = 0; j < pc; j++) {
                         params[j] = resolve_type(s, m->function.params[j].ptype);
                         if (!params[j]) params[j] = re0_type_make(RE0_TYPE_I64, NULL);
@@ -522,7 +731,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             /* 注册为 struct */
             char *fnames[32]; char *ftypes[32];
             int sc = stmt->component.state_count;
-            if (sc > 32) sc = 32;
+            sc = sema_cap_count(s, stmt->span, sc, 32, "component state fields");
             for (int i = 0; i < sc; i++) {
                 fnames[i] = stmt->component.state[i].name;
                 ftypes[i] = stmt->component.state[i].type;
@@ -532,8 +741,9 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             for (int i = 0; i < stmt->component.method_count; i++) {
                 Re0Stmt *m = stmt->component.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
+                char mangled_buf[256];
                 const char *mangled = re0_model_method_symbol(
-                    NULL, stmt->component.name, m->function.name);
+                    NULL, stmt->component.name, m->function.name, mangled_buf, sizeof(mangled_buf));
                 re0_model_register_method(s->model, stmt->component.name,
                                           m->function.name, mangled);
             }

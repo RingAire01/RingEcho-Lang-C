@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "re0_limits.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,8 +13,8 @@
 #define R_FP      28
 #define R_SP      30
 #define R_RA      31
-#define MAX_VARS  128
-#define MAX_STRUCTS 32
+#define MAX_VARS  RE0_MAX_REO_VARS
+#define MAX_STRUCTS RE0_MAX_REO_STRUCTS
 
 /* ── struct field offset tracking ── */
 static struct { char *name; int offsets[16]; int count; } reo_structs[MAX_STRUCTS];
@@ -41,11 +42,24 @@ static int lookup_var(const char *name) {
     return -1;
 }
 
-static int alloc_var(const char *name) {
+static int alloc_var(Re0Codegen *c, const char *name) {
     int r = lookup_var(name);
     if (r >= 0) return r;
+    if (var_count >= MAX_VARS) {
+        if (c && c->errors)
+            re0_error_append(c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
+                             "reo backend: variable register table full (%d)", MAX_VARS);
+        return R_TMP_FIRST;
+    }
     int reg = (var_count % (R_VAR_LAST - R_VAR_FIRST + 1)) + R_VAR_FIRST;
-    var_map[var_count].name = strdup(name);
+    char *dup = strdup(name);
+    if (!dup) {
+        if (c && c->errors)
+            re0_error_append(c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
+                             "reo backend: out of memory in alloc_var");
+        return R_TMP_FIRST;
+    }
+    var_map[var_count].name = dup;
     var_map[var_count].reg = reg;
     var_count++;
     return reg;
@@ -205,7 +219,7 @@ static void emit_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
     if (!s) return;
     switch (s->kind) {
         case STMT_LET: {
-            int reg = alloc_var(s->let_stmt.name);
+            int reg = alloc_var(c, s->let_stmt.name);
             if (s->let_stmt.init) {
                 int vr = eval_expr(c, s->let_stmt.init);
                 emit(c, "    ADDI R%d, R%d, 0", reg, vr);
@@ -216,7 +230,7 @@ static void emit_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
         }
         case STMT_ASSIGN: {
             int reg = lookup_var(s->assign.name);
-            if (reg < 0) reg = alloc_var(s->assign.name);
+            if (reg < 0) reg = alloc_var(c, s->assign.name);
             int vr = eval_expr(c, s->assign.value);
             emit(c, "    ADDI R%d, R%d, 0", reg, vr);
             break;
@@ -260,7 +274,7 @@ static void emit_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             break;
         }
         case STMT_FOR: {
-            int vr = alloc_var(s->for_stmt.var);
+            int vr = alloc_var(c, s->for_stmt.var);
             emit(c, "    LI R%d, 0", vr);
             int l_start = re0_codegen_new_label(c);
             int l_end = re0_codegen_new_label(c);
@@ -281,7 +295,7 @@ static void emit_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
         case STMT_FUNCTION: {
             emit(c, "%s:", s->function.name);
             for (int i = 0; i < s->function.param_count; i++)
-                alloc_var(s->function.params[i].name);
+                alloc_var(c, s->function.params[i].name);
             emit_body(c, s->function.body, s->function.body_count);
             emit(c, "    LI R%d, 0", R_TMP_FIRST);
             emit(c, "    PUSH R%d", R_TMP_FIRST);

@@ -1,3 +1,4 @@
+#include "safe.h"
 #include "model.h"
 #include "arena.h"
 #include "types.h"
@@ -24,7 +25,7 @@ void re0_model_register_struct(Re0SemanticModel *m, const char *name,
     Re0StructDef def;
     memset(&def, 0, sizeof(def));
     def.name = strdup(name);
-    def.fields = (Re0StructField*)calloc((size_t)n, sizeof(Re0StructField));
+    def.fields = (Re0StructField*)xcalloc((size_t)n, sizeof(Re0StructField));
     def.field_count = n;
     def.type_params = NULL;
     def.type_param_count = 0;
@@ -39,8 +40,8 @@ void re0_model_register_enum(Re0SemanticModel *m, const char *name,
                             char **variant_names, int *has_payload, int n) {
     Re0EnumDef def;
     def.name = strdup(name);
-    def.variant_names = (char**)calloc((size_t)n, sizeof(char*));
-    def.variant_has_payload = (int*)calloc((size_t)n, sizeof(int));
+    def.variant_names = (char**)xcalloc((size_t)n, sizeof(char*));
+    def.variant_has_payload = (int*)xcalloc((size_t)n, sizeof(int));
     def.variant_count = n;
     for (int i = 0; i < n; i++) {
         def.variant_names[i] = strdup(variant_names[i]);
@@ -79,14 +80,14 @@ void re0_model_register_trait(Re0SemanticModel *m, const char *name,
     Re0TraitDef def;
     def.name = strdup(name);
     def.method_count = method_count;
-    def.methods = (Re0TraitMethod*)calloc((size_t)(method_count > 0 ? method_count : 1),
+    def.methods = (Re0TraitMethod*)xcalloc((size_t)(method_count > 0 ? method_count : 1),
                                           sizeof(Re0TraitMethod));
     for (int i = 0; i < method_count; i++) {
         def.methods[i].name = strdup(methods[i].name);
         def.methods[i].ret_type = methods[i].ret_type ? strdup(methods[i].ret_type) : NULL;
         def.methods[i].param_count = methods[i].param_count;
         if (methods[i].param_count > 0) {
-            def.methods[i].param_types = (char**)calloc((size_t)methods[i].param_count,
+            def.methods[i].param_types = (char**)xcalloc((size_t)methods[i].param_count,
                                                          sizeof(char*));
             for (int j = 0; j < methods[i].param_count; j++)
                 def.methods[i].param_types[j] = methods[i].param_types[j]
@@ -161,13 +162,13 @@ const char *re0_model_lookup_method(Re0SemanticModel *m, const char *struct_name
  * ════════════════════════════════════════ */
 
 const char *re0_model_method_symbol(const char *trait, const char *struct_name,
-                                    const char *method) {
-    static char buf[512];
+                                    const char *method, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return NULL;
     if (trait)
-        snprintf(buf, sizeof(buf), "%s_%s_%s", trait, struct_name, method);
+        snprintf(out, out_sz, "%s_%s_%s", trait, struct_name, method);
     else
-        snprintf(buf, sizeof(buf), "%s_%s", struct_name, method);
-    return buf;
+        snprintf(out, out_sz, "%s_%s", struct_name, method);
+    return out;
 }
 
 /* ════════════════════════════════════════
@@ -206,12 +207,12 @@ void re0_model_register_fn(Re0SemanticModel *m, const char *name,
     sig.type_param_count = type_param_count;
 
     if (param_count > 0 && param_types) {
-        sig.param_types = (char**)calloc((size_t)param_count, sizeof(char*));
+        sig.param_types = (char**)xcalloc((size_t)param_count, sizeof(char*));
         for (int i = 0; i < param_count; i++)
             sig.param_types[i] = strdup(param_types[i]);
     }
     if (type_param_count > 0 && type_params) {
-        sig.type_params = (char**)calloc((size_t)type_param_count, sizeof(char*));
+        sig.type_params = (char**)xcalloc((size_t)type_param_count, sizeof(char*));
         for (int i = 0; i < type_param_count; i++)
             sig.type_params[i] = strdup(type_params[i]);
     }
@@ -231,24 +232,9 @@ Re0FnSignature *re0_model_find_fn(Re0SemanticModel *m, const char *name) {
  * ════════════════════════════════════════ */
 
 Re0Type *re0_model_std_type(const char *name) {
-    if (!name) return NULL;
-    if (strcmp(name, "i8") == 0) return re0_type_make(RE0_TYPE_I8, NULL);
-    if (strcmp(name, "i16") == 0) return re0_type_make(RE0_TYPE_I16, NULL);
-    if (strcmp(name, "i32") == 0) return re0_type_make(RE0_TYPE_I32, NULL);
-    if (strcmp(name, "i64") == 0) return re0_type_make(RE0_TYPE_I64, NULL);
-    if (strcmp(name, "u8") == 0) return re0_type_make(RE0_TYPE_U8, NULL);
-    if (strcmp(name, "u16") == 0) return re0_type_make(RE0_TYPE_U16, NULL);
-    if (strcmp(name, "u32") == 0) return re0_type_make(RE0_TYPE_U32, NULL);
-    if (strcmp(name, "u64") == 0) return re0_type_make(RE0_TYPE_U64, NULL);
-    if (strcmp(name, "f64") == 0) return re0_type_make(RE0_TYPE_F64, NULL);
-    if (strcmp(name, "f32") == 0) return re0_type_make(RE0_TYPE_F32, NULL);
-    if (strcmp(name, "bool") == 0) return re0_type_make(RE0_TYPE_BOOL, NULL);
-    if (strcmp(name, "char") == 0) return re0_type_make(RE0_TYPE_CHAR, NULL);
-    if (strcmp(name, "str") == 0) return re0_type_make(RE0_TYPE_STR, NULL);
-    if (strcmp(name, "ptr") == 0) return re0_type_make(RE0_TYPE_PTR, NULL);
-    if (strcmp(name, "unit") == 0) return re0_type_make(RE0_TYPE_UNIT, NULL);
-    if (strcmp(name, "never") == 0) return re0_type_make(RE0_TYPE_NEVER, NULL);
-    return NULL;
+    Re0Type *t = re0_type_parse(name);
+    if (t && t->kind == RE0_TYPE_STRUCT) return NULL;
+    return t;
 }
 
 /* ════════════════════════════════════════

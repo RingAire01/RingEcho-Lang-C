@@ -1,9 +1,10 @@
+#include "safe.h"
 #include "scope.h"
 #include <stdlib.h>
 #include <string.h>
 
 Re0Scope *re0_scope_new(Re0Scope *parent) {
-    Re0Scope *s = (Re0Scope*)calloc(1, sizeof(Re0Scope));
+    Re0Scope *s = (Re0Scope*)xcalloc(1, sizeof(Re0Scope));
     if (s) {
         Re0SymbolVec_init(&s->symbols);
         s->parent = parent;
@@ -16,6 +17,7 @@ void re0_scope_define(Re0Scope *s, const char *name, Re0Type *type, bool is_mut)
     if (!s || !name) return;
     Re0Symbol sym;
     sym.name = strdup(name);
+    if (!sym.name) return;
     sym.type = type;
     sym.is_mutable = is_mut;
     sym.is_function = false;

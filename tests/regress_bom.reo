@@ -1,0 +1,16 @@
+﻿// 回归测试: UTF-8 BOM 跳过(带 BOM 的源文件曾报 unexpected character)
+// 修复点: lexer.c re0_lexer_tokenize 开头跳 EF BB BF
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+fn main() {
+    check("basic", 1 + 1 == 2);
+    check("str", str_eq("中文", "中文"));
+    println("--- regress_bom done ---");
+}

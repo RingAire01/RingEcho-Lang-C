@@ -1,3 +1,4 @@
+#include "safe.h"
 #include "error.h"
 #include <stdio.h>
 #include <stdarg.h>
@@ -29,7 +30,19 @@ void re0_error_append(Re0ErrorList *l, Re0ErrorLevel lev, Re0Span sp,
 }
 
 bool re0_error_list_has_errors(Re0ErrorList *l) {
-    return Re0ErrorVec_len(&l->errors) > 0;
+    if (!l) return false;
+    for (size_t i = 0; i < Re0ErrorVec_len(&l->errors); i++) {
+        if (l->errors.data[i].level != RE0_WARN) return true;
+    }
+    return false;
+}
+
+bool re0_error_list_has_warnings(Re0ErrorList *l) {
+    if (!l) return false;
+    for (size_t i = 0; i < Re0ErrorVec_len(&l->errors); i++) {
+        if (l->errors.data[i].level == RE0_WARN) return true;
+    }
+    return false;
 }
 
 void re0_error_list_print(Re0ErrorList *l) {
@@ -47,6 +60,9 @@ void re0_error_list_print(Re0ErrorList *l) {
 void re0_error_list_free(Re0ErrorList *l) {
     for (size_t i = 0; i < Re0ErrorVec_len(&l->errors); i++) {
         free(l->errors.data[i].msg);
+        /* 注意：file 字段通常指向字符串常量或由调用者管理，不在此处释放。
+         * 如果 file 是动态分配的，调用者应先释放或修改 re0_error_append 复制 file */
+        /* free((void*)l->errors.data[i].file); */  /* 如果需要释放 file，取消注释此行 */
     }
     Re0ErrorVec_free(&l->errors);
 }

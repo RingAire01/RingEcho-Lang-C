@@ -91,8 +91,17 @@ void re0_gc_arc_collect(Re0GcEngine *eng)
     /* phase 1：重置颜色 */
     re0_gc_tracing_reset_colors(eng->head);
 
-    /* phase 2：从 roots 出发标记可达对象 */
-    re0_gc_tracing_mark(&eng->roots, &eng->listeners);
+    /* phase 2：从 roots 出发标记可达对象。
+     * mark OOM 时放弃 sweep，避免误回收可达对象（同 C1）。 */
+    if (re0_gc_tracing_mark(&eng->roots, &eng->listeners)) {
+        if (eng->listeners.count > 0) {
+            Re0GcEvent ev = re0_gc_event_make(
+                RE0_GC_EV_COLLECT_DONE, eng->config.mode, eng->config.algo);
+            ev.freed_count = 0;
+            re0_gc_listeners_emit(&eng->listeners, &ev);
+        }
+        return;
+    }
 
     /* phase 3：回收不可达对象（含循环垃圾和悬挂对象）。
      * ARC 模式下链表中的对象 ref_count 通常 > 0（因为 ==0 的已被即时释放），

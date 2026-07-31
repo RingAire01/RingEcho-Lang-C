@@ -16,6 +16,8 @@ typedef struct {
     Re0BuiltinRegistry *builtins;
     Re0StmtVec         checked;
     bool               had_error;
+    int                infer_depth;
+    Re0Type           *current_fn_return;   /* 当前函数返回类型（B3 校验用） */
 } Re0Sema;
 
 void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,

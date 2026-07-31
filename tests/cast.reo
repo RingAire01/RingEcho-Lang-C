@@ -1,0 +1,19 @@
+fn main() {
+    let big = 0xFFFFFFFF;
+    let small = big as i32;
+    println(small);
+
+    let byte = big as i8;
+    println(byte);
+
+    let ubyte = big as u8;
+    println(ubyte);
+
+    let word = 0x12345678;
+    let lo16 = word as u16;
+    println(lo16);
+
+    let neg = -1;
+    let as_u8 = neg as u8;
+    println(as_u8);
+}

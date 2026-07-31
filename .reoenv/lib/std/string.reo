@@ -1,0 +1,6 @@
+/* std/string */
+fn length(s: str) -> i64 { return str_len(s) }
+fn concat(a: str, b: str) -> str { return str_concat(a, b) }
+fn equals(a: str, b: str) -> bool { return str_eq(a, b) }
+fn substring(s: str, start: i64, end: i64) -> str { return str_slice(s, start, end) }
+fn parse_int(s: str) -> i64 { return str_to_int(s) }

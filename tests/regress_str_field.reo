@@ -1,0 +1,35 @@
+// 回归测试: struct str 字段访问的类型推断(曾推成 i64,println 打印指针值)
+// 修复点: backend_c.c 加 struct 字段类型登记表 + EXPR_SELECT 推断
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+struct Cfg {
+    n: i64,
+    name: str,
+    flag: bool,
+}
+
+fn make() -> Cfg {
+    return Cfg { n: 42, name: "hello", flag: true };
+}
+
+fn main() {
+    let c = make();
+    // str 字段经推断后按字符串使用
+    let m = c.name;
+    check("str_field_eq", str_eq(m, "hello"));
+    check("str_field_concat", str_eq(m + "!", "hello!"));
+    // 非 str 字段不受影响
+    check("int_field", c.n == 42);
+    check("bool_field", c.flag == true);
+    // 直接字段参与拼接
+    check("direct_concat", str_eq(c.name + " world", "hello world"));
+    println("--- regress_str_field done ---");
+}

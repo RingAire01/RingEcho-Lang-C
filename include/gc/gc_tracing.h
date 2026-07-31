@@ -1,6 +1,7 @@
 #ifndef RE0_GC_TRACING_H
 #define RE0_GC_TRACING_H
 
+#include <stdbool.h>
 #include "gc_object.h"
 #include "gc_roots.h"
 #include "gc_stats.h"
@@ -31,7 +32,9 @@ typedef struct {
 void re0_gc_tracing_collect(Re0GcTracingCtx *ctx);
 
 /* 仅执行 mark 阶段（并发模式预留：可独立调用） */
-void re0_gc_tracing_mark(Re0GcRootSet *roots, Re0GcListeners *ls);
+/* 执行 mark 阶段。返回 true 表示 mark-stack OOM——
+ * 调用方必须放弃本次 sweep，否则会误回收未被标记的可达对象。 */
+bool re0_gc_tracing_mark(Re0GcRootSet *roots, Re0GcListeners *ls);
 
 /* 仅执行 sweep 阶段（并发模式预留） */
 int  re0_gc_tracing_sweep(Re0GcObject **head, Re0GcStats *stats);

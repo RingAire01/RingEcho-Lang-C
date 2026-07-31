@@ -7,10 +7,15 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <time.h>
+#if !defined(RE0_PLATFORM_WINDOWS)
+#include <unistd.h>
+#include <sys/wait.h>
+#endif
 
 #if defined(RE0_PLATFORM_WINDOWS)
 #include <direct.h>
 #include <process.h>
+#include <windows.h>
 #define RE0_MKDIR(path) _mkdir(path)
 #define RE0_PROCESS_ID() ((unsigned long)_getpid())
 #define RE0_TEMP_DIRECTORY "target\\Temp"
@@ -75,10 +80,11 @@ static bool make_temp_path(Re0Build *b, char *path, size_t path_size,
 
 void re0_build_init(Re0Build *b, Re0ErrorList *errors) {
     b->errors = errors;
-    b->cc_path = RE0_PLATFORM_DEFAULT_C_COMPILER;
+    const char *env_cc = getenv("REO_CC");
+    b->cc_path = (env_cc && *env_cc) ? env_cc : RE0_PLATFORM_DEFAULT_C_COMPILER;
     b->output_path = NULL;
     b->tmp_file[0] = '\0';
-    b->keep_c = true;
+    b->keep_c = false;
 }
 
 bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path) {
@@ -102,16 +108,72 @@ bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path)
         return false;
     }
 
-    char cmd[1024];
-    int command_size = snprintf(cmd, sizeof(cmd), "%s -O2 -pthread \"%s\" -o \"%s\" 2>&1",
-                                b->cc_path, b->tmp_file, output_path);
-    if (command_size < 0 || (size_t)command_size >= sizeof(cmd)) {
+    int rc;
+    const char *cc_opt = getenv("REO_CC_OPT");
+    if (!cc_opt || !*cc_opt) cc_opt = "-O1";
+#if defined(RE0_PLATFORM_WINDOWS)
+    /* 使用 CreateProcess 避免命令注入 */
+    char args[2048];
+    int args_written = snprintf(args, sizeof(args), "%s %s -pthread \"%s\" -o \"%s\"",
+                               b->cc_path, cc_opt, b->tmp_file, output_path);
+    if (args_written < 0 || (size_t)args_written >= sizeof(args)) {
         re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
-                         "C compiler command exceeds internal limit");
+                         "compiler arguments exceed limit");
         if (!b->keep_c) remove(b->tmp_file);
         return false;
     }
-    int rc = system(cmd);
+
+    STARTUPINFOA si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+    BOOL ok = CreateProcessA(
+        b->cc_path,           // lpApplicationName
+        args,                 // lpCommandLine
+        NULL,                 // lpProcessAttributes
+        NULL,                 // lpThreadAttributes
+        FALSE,                // bInheritHandles
+        0,                    // dwCreationFlags
+        NULL,                 // lpEnvironment
+        NULL,                 // lpCurrentDirectory
+        &si,                  // lpStartupInfo
+        &pi                   // lpProcessInformation
+    );
+    if (!ok) {
+        re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                         "cannot launch C compiler (error %lu)", GetLastError());
+        if (!b->keep_c) remove(b->tmp_file);
+        return false;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code;
+    if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+        re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
+                         "cannot get compiler exit code");
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        if (!b->keep_c) remove(b->tmp_file);
+        return false;
+    }
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    rc = (int)exit_code;
+#else
+    char *cc_argv[] = { (char*)b->cc_path, (char*)cc_opt, "-pthread", b->tmp_file, "-o", (char*)output_path, NULL };
+    pid_t cc_pid = fork();
+    if (cc_pid < 0) {
+        re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
+                         "cannot launch C compiler");
+        if (!b->keep_c) remove(b->tmp_file);
+        return false;
+    }
+    if (cc_pid == 0) { execvp(b->cc_path, cc_argv); _exit(127); }
+    int cc_st = 0;
+    while (waitpid(cc_pid, &cc_st, 0) < 0 && errno == EINTR) {}
+    rc = WIFEXITED(cc_st) ? WEXITSTATUS(cc_st) : -1;
+#endif
     if (rc != 0) {
         re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
                          "compilation failed (exit code %d)", rc);

@@ -1,3 +1,4 @@
+#include "safe.h"
 /*
  * workspace.c — 多文件工作区实现
  *
@@ -7,9 +8,11 @@
 #include "workspace.h"
 #include "lexer.h"
 #include "parser.h"
+#include "venv.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <libgen.h>
 
 void re0_workspace_init(Re0Workspace *ws, const char *entry_path) {
@@ -43,33 +46,106 @@ static void mark_loaded(Re0Workspace *ws, const char *path) {
  * import "utils/helpers"  → utils/helpers.reo
  * from "math" { add }     → math.reo
  */
-static void resolve_import_path(Re0Stmt *stmt, char *out, size_t out_cap,
-                                 const char *base_dir) {
+static bool write_import_path(char *out, size_t out_cap, const char *format,
+                              const char *first, const char *second,
+                              const char *third, const char *fourth) {
+    int written = snprintf(out, out_cap, format, first, second, third, fourth);
+    if (written < 0 || (size_t)written >= out_cap) {
+        if (out_cap > 0) out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+static bool is_safe_module_path(const char *mod) {
+    if (!mod || !*mod) return false;
+    if (mod[0] == '/') return false;
+    for (const char *p = mod; *p; ) {
+        const char *seg = p;
+        while (*p && *p != '/') p++;
+        size_t seglen = (size_t)(p - seg);
+        if (seglen == 2 && seg[0] == '.' && seg[1] == '.') return false;
+        if (*p == '/') p++;
+    }
+    return true;
+}
+
+static bool resolve_import_path(Re0Stmt *stmt, char *out, size_t out_cap,
+                                const char *base_dir) {
     out[0] = '\0';
     const char *mod = NULL;
     if (stmt->kind == STMT_IMPORT) {
         mod = stmt->import.module;
     }
-    if (!mod) return;
-    /* 如果以 / 开头，绝对路径；否则相对 base_dir */
-    if (mod[0] == '/') {
-        snprintf(out, out_cap, "%s.reo", mod);
-        return;
+    if (!mod || out_cap == 0) return false;
+    if (!is_safe_module_path(mod)) return false;
+    /* 1. 尝试项目本地: base_dir/mod.reo */
+    if (!write_import_path(out, out_cap, "%s/%s.reo", base_dir, mod, "", "")) return false;
+    if (access(out, R_OK) == 0) return true;
+
+    /* 2. 尝试虚拟环境: .renv/lib/std/mod.reo 和 packages/mod.reo */
+    char env_dir[512];
+    if (reo_venv_detect(env_dir, sizeof(env_dir))) {
+        /* 标准库 */
+        if (write_import_path(out, out_cap, "%s/%s/%s/%s.reo", env_dir, RE0_VENV_LIB, RE0_VENV_STD, mod) &&
+            access(out, R_OK) == 0) return true;
+        /* 第三方包 */
+        if (write_import_path(out, out_cap, "%s/%s/%s/%s.reo", env_dir, RE0_VENV_LIB, RE0_VENV_PACKAGES, mod) &&
+            access(out, R_OK) == 0) return true;
     }
-    snprintf(out, out_cap, "%s/%s.reo", base_dir, mod);
+
+    /* 3. 全局: ~/.re/lib/mod.reo */
+    const char *home = getenv("HOME");
+    if (home) {
+        if (write_import_path(out, out_cap, "%s/%s/%s.reo", home, RE0_GLOBAL_LIB_DIR, mod, "") &&
+            access(out, R_OK) == 0) return true;
+    }
+
+    /* 4. fallback: base_dir/mod.reo（即使不存在也返回，让上层报错） */
+    return write_import_path(out, out_cap, "%s/%s.reo", base_dir, mod, "", "");
 }
 
 /* 读取文件内容 */
 static char *read_file_content(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
+    
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    
     long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz < 0) { fclose(f); return NULL; }
-    char *buf = (char*)malloc((size_t)sz + 1);
-    if (!buf) { fclose(f); return NULL; }
+    if (sz < 0) {
+        fclose(f);
+        return NULL;
+    }
+    
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
+    
+    /* 文件大小限制：防止大文件 DoS */
+    if (sz > RE0_MAX_SOURCE_BYTES) {
+        fclose(f);
+        return NULL;
+    }
+    
+    char *buf = (char*)xmalloc((size_t)sz + 1);
+    if (!buf) {
+        fclose(f);
+        return NULL;
+    }
+    
     size_t rd = fread(buf, 1, (size_t)sz, f);
+    if (rd != (size_t)sz) {
+        /* 部分读取或错误 */
+        free(buf);
+        fclose(f);
+        return NULL;
+    }
+    
     buf[rd] = '\0';
     fclose(f);
     return buf;
@@ -107,7 +183,7 @@ static void load_file_recursive(Re0Workspace *ws, const char *path,
     int stmt_count = (int)Re0StmtVec_len(&parser->stmts);
     Re0Stmt **local_stmts = NULL;
     if (stmt_count > 0) {
-        local_stmts = (Re0Stmt**)calloc((size_t)stmt_count, sizeof(Re0Stmt*));
+        local_stmts = (Re0Stmt**)xcalloc((size_t)stmt_count, sizeof(Re0Stmt*));
         for (int i = 0; i < stmt_count; i++)
             local_stmts[i] = parser->stmts.data[i];
     }
@@ -117,10 +193,12 @@ static void load_file_recursive(Re0Workspace *ws, const char *path,
         Re0Stmt *s = local_stmts[i];
         if (s && s->kind == STMT_IMPORT) {
             char dep_path[RE0_MAX_PATH];
-            resolve_import_path(s, dep_path, sizeof(dep_path), ws->base_dir);
-            if (dep_path[0])
+            if (resolve_import_path(s, dep_path, sizeof(dep_path), ws->base_dir) && dep_path[0])
                 load_file_recursive(ws, dep_path, arena, errors,
-                                    lexer, parser, out_stmts);
+                                     lexer, parser, out_stmts);
+            else
+                re0_error_append(errors, RE0_ERR_IO, s->span, NULL,
+                                 "import path exceeds %d bytes", RE0_MAX_PATH - 1);
         }
     }
 

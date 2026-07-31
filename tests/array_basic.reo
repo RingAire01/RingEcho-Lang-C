@@ -1,0 +1,19 @@
+fn main() {
+    let arr = [10, 20, 30];
+    println(arr[0]);
+    println(arr[1]);
+    println(arr[2]);
+
+    arr[0] = 99;
+    println(arr[0]);
+
+    let regs = [0; 8];
+    println(regs[0]);
+    regs[3] = 42;
+    println(regs[3]);
+    println(regs[0]);
+
+    let mask = 0xFF;
+    let val = (mask & 0x0F) | arr[1];
+    println(val);
+}

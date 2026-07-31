@@ -1,0 +1,46 @@
+// 回归测试: 含数组的 struct 按值返回(数组曾是栈复合字面量,返回后悬空成垃圾)
+// 修复点: backend_c.c 数组字面量改堆分配 __reo_array_repeat/dup
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+struct Buf {
+    len: i64,
+    data: [i64; 16],
+}
+
+fn fill(n: i64) -> Buf {
+    let b = Buf { len: 0, data: [0; 16] };
+    let i = 0;
+    while i < n {
+        b.data[i] = i * 10;
+        i = i + 1;
+    }
+    b.len = n;
+    return b;
+}
+
+fn main() {
+    let r = fill(4);
+    check("len", r.len == 4);
+    check("data0", r.data[0] == 0);
+    check("data1", r.data[1] == 10);
+    check("data2", r.data[2] == 20);
+    check("data3", r.data[3] == 30);
+    // 显式元素数组字面量也走堆分配
+    let a = [5, 6, 7];
+    check("explicit0", a[0] == 5);
+    check("explicit2", a[2] == 7);
+    // 局部数组写后再读
+    let regs = [0; 8];
+    regs[3] = 42;
+    check("local_write", regs[3] == 42);
+    check("local_unwritten", regs[0] == 0);
+    println("--- regress_struct_array done ---");
+}

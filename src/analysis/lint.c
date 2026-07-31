@@ -1,11 +1,12 @@
 #include "lint.h"
+#include "re0_limits.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 
-#define MAX_LINT_VARS 256
-#define MAX_FUNC_LINES 50
-#define MAX_NESTING 5
+#define MAX_LINT_VARS RE0_MAX_LINT_VARS
+#define MAX_FUNC_LINES RE0_MAX_FUNC_LINES
+#define MAX_NESTING RE0_MAX_NESTING
 
 typedef struct { char name[128]; bool used; int line; } LintVar;
 static LintVar lint_vars[MAX_LINT_VARS];
@@ -180,9 +181,92 @@ static void lint_stmts(Re0Stmt **stmts, int count, Re0ErrorList *errors, int dep
     }
 }
 
+static void safety_stmts(Re0Stmt **stmts, int count, Re0ErrorList *errors);
+
+static void safety_expr(Re0Expr *e, Re0ErrorList *errors) {
+    if (!e) return;
+    switch (e->kind) {
+        case EXPR_BINARY: {
+            safety_expr(e->binary.left, errors);
+            safety_expr(e->binary.right, errors);
+            Re0Expr *l = e->binary.left, *r = e->binary.right;
+            if (l && r && l->kind == EXPR_INT && r->kind == EXPR_INT) {
+                long long a = (long long)l->int_lit.val, b = (long long)r->int_lit.val, out;
+                bool ov = false;
+                const char *what = NULL;
+                if (e->binary.op == BINOP_ADD) { ov = __builtin_add_overflow(a, b, &out); what = "addition"; }
+                else if (e->binary.op == BINOP_SUB) { ov = __builtin_sub_overflow(a, b, &out); what = "subtraction"; }
+                else if (e->binary.op == BINOP_MUL) { ov = __builtin_mul_overflow(a, b, &out); what = "multiplication"; }
+                if (ov)
+                    re0_error_append(errors, RE0_WARN, e->span, NULL,
+                                    "safety: constant overflow in %s", what);
+            }
+            break;
+        }
+        case EXPR_CALL: {
+            if (e->call.callee && e->call.callee->kind == EXPR_IDENT &&
+                strcmp(e->call.callee->ident.name, "free") == 0 && e->call.arg_count > 0 &&
+                (e->call.args[0]->kind == EXPR_STRING || e->call.args[0]->kind == EXPR_INT))
+                re0_error_append(errors, RE0_WARN, e->span, NULL,
+                                "safety: free() on a literal has no effect");
+            safety_expr(e->call.callee, errors);
+            for (int i = 0; i < e->call.arg_count; i++) safety_expr(e->call.args[i], errors);
+            break;
+        }
+        case EXPR_UNARY: safety_expr(e->unary.operand, errors); break;
+        case EXPR_SELECT: safety_expr(e->select.object, errors); break;
+        case EXPR_INDEX: safety_expr(e->index.target, errors); safety_expr(e->index.index, errors); break;
+        case EXPR_IF:
+            safety_expr(e->if_expr.cond, errors);
+            safety_expr(e->if_expr.then, errors);
+            if (e->if_expr.else_) safety_expr(e->if_expr.else_, errors);
+            break;
+        case EXPR_ARRAY:
+            for (int i = 0; i < e->array.count; i++) safety_expr(e->array.elems[i], errors);
+            break;
+        default: break;
+    }
+}
+
+static void safety_stmt(Re0Stmt *s, Re0ErrorList *errors) {
+    if (!s) return;
+    switch (s->kind) {
+        case STMT_EXPR: safety_expr(s->expr_stmt.expr, errors); break;
+        case STMT_LET: safety_expr(s->let_stmt.init, errors); break;
+        case STMT_ASSIGN: safety_expr(s->assign.value, errors); break;
+        case STMT_RETURN: safety_expr(s->return_stmt.value, errors); break;
+        case STMT_IF:
+            for (int i = 0; i < s->if_stmt.branch_count; i++) {
+                safety_expr(s->if_stmt.branches[i].cond, errors);
+                safety_stmts(s->if_stmt.branches[i].body, s->if_stmt.branches[i].body_count, errors);
+            }
+            if (s->if_stmt.else_body)
+                safety_stmts(s->if_stmt.else_body, s->if_stmt.else_count, errors);
+            break;
+        case STMT_WHILE:
+            safety_expr(s->while_stmt.cond, errors);
+            safety_stmts(s->while_stmt.body, s->while_stmt.body_count, errors);
+            break;
+        case STMT_FOR:
+            safety_expr(s->for_stmt.iter, errors);
+            safety_stmts(s->for_stmt.body, s->for_stmt.body_count, errors);
+            break;
+        case STMT_FUNCTION:
+            safety_stmts(s->function.body, s->function.body_count, errors);
+            break;
+        default: break;
+    }
+}
+
+static void safety_stmts(Re0Stmt **stmts, int count, Re0ErrorList *errors) {
+    for (int i = 0; i < count; i++) safety_stmt(stmts[i], errors);
+}
+
 void re0_lint_run(Re0StmtVec *stmts, Re0ErrorList *errors) {
     lint_var_count = 0;
     for (size_t i = 0; i < Re0StmtVec_len(stmts); i++)
         lint_stmt(stmts->data[i], errors, 0);
     lint_var_finish(errors);
+    for (size_t i = 0; i < Re0StmtVec_len(stmts); i++)
+        safety_stmt(stmts->data[i], errors);
 }

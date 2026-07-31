@@ -1,0 +1,43 @@
+// 回归测试: vec 跨函数传递(返回/参数曾发成未知 C 类型导致编译失败)
+// 修复点: backend_c.c reo_type_to_c 补 vec -> __reo_vec_t*
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+// 返回 vec
+fn mk_vec() -> vec {
+    let v = vec_new();
+    vec_push(v, 10);
+    vec_push(v, 20);
+    vec_push(v, 30);
+    return v;
+}
+
+// 接收 vec 参数
+fn sum_vec(v: vec) -> i64 {
+    let s = 0;
+    let i = 0;
+    while i < vec_len(v) {
+        s = s + vec_get(v, i);
+        i = i + 1;
+    }
+    return s;
+}
+
+fn main() {
+    let v = mk_vec();
+    check("len", vec_len(v) == 3);
+    check("get1", vec_get(v, 1) == 20);
+    check("sum", sum_vec(v) == 60);
+    // 跨函数后继续 push
+    vec_push(v, 40);
+    check("push_after_xfn", vec_len(v) == 4);
+    check("get3", vec_get(v, 3) == 40);
+    println("--- regress_vec_xfn done ---");
+}

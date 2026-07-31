@@ -1,3 +1,4 @@
+#include "safe.h"
 /*
  * lsp_server.c — RingEcho LSP 服务器
  *
@@ -51,10 +52,13 @@ static void lsp_send(const char *json) {
 
 /* ── 发送响应（有 id 的请求） ── */
 static void lsp_send_response(int id, const char *result_json) {
-    char buf[8192];
-    snprintf(buf, sizeof(buf),
+    size_t need = strlen(result_json) + 128;
+    char *buf = (char*)malloc(need);
+    if (!buf) return;
+    snprintf(buf, need,
         "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":%s}", id, result_json);
     lsp_send(buf);
+    free(buf);
 }
 
 /* ── 发送诊断通知 ── */
@@ -88,10 +92,12 @@ static void lsp_send_diagnostics(const char *uri, Re0ErrorList *errors) {
     fflush(f);
 
     long len = ftell(f);
+    if (len < 0) { fclose(f); return; }
     char *buf = (char*)malloc((size_t)len + 1);
+    if (!buf) { fclose(f); return; }
     fseek(f, 0, SEEK_SET);
-    fread(buf, 1, (size_t)len, f);
-    buf[len] = '\0';
+    size_t rd = fread(buf, 1, (size_t)len, f);
+    buf[rd] = '\0';
     fclose(f);
     lsp_send(buf);
     free(buf);
@@ -136,8 +142,11 @@ static char *read_message(size_t *out_len) {
         while (hlen > 0 && (header[hlen-1] == '\r' || header[hlen-1] == '\n'))
             header[--hlen] = '\0';
         if (hlen == 0) break; /* 空行 = 头结束 */
-        if (strncmp(header, "Content-Length:", 15) == 0)
-            content_len = (size_t)atol(header + 15);
+        if (strncmp(header, "Content-Length:", 15) == 0) {
+            long cl = atol(header + 15);
+            if (cl < 0 || cl > (long)RE0_MAX_LSP_MESSAGE) { content_len = 0; break; }
+            content_len = (size_t)cl;
+        }
     }
     if (content_len == 0) return NULL;
 
@@ -156,7 +165,7 @@ static char *read_message(size_t *out_len) {
 
 /* ── LSP 主循环 ── */
 int lsp_server_run(void) {
-    bool initialized = false;
+    bool initialized __attribute__((unused)) = false;
     bool shutdown_req = false;
 
     while (!shutdown_req) {

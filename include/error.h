@@ -9,6 +9,7 @@ typedef struct { Re0ErrorVec errors; } Re0ErrorList;
 void re0_error_list_init(Re0ErrorList *l);
 void re0_error_append(Re0ErrorList *l, Re0ErrorLevel lev, Re0Span sp, const char *file, const char *fmt, ...);
 bool re0_error_list_has_errors(Re0ErrorList *l);
+bool re0_error_list_has_warnings(Re0ErrorList *l);
 void re0_error_list_print(Re0ErrorList *l);
 void re0_error_list_free(Re0ErrorList *l);
 #endif

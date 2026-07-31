@@ -1,3 +1,4 @@
+#include "safe.h"
 #include "lexer.h"
 #include <string.h>
 #include <ctype.h>
@@ -122,9 +123,9 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
     if (negative) buf[bi++] = '-';
     if (lead) buf[bi++] = lead;
 
-    if (lead != '0' && peek(l) == '0') {
-        char n1 = peek_n(l, 1);
-        if (n1 == 'x' || n1 == 'X') { advance(l); advance(l);
+    if (lead == '0' && peek(l)) {
+        char n1 = peek(l);
+        if (n1 == 'x' || n1 == 'X') { advance(l);
             while (is_hex_digit(peek(l)) || peek(l) == '_') {
                 if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
             }
@@ -133,7 +134,7 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
             t.int_val = strtoll(buf, NULL, 16);
             return t;
         }
-        if (n1 == 'b' || n1 == 'B') { advance(l); advance(l);
+        if (n1 == 'b' || n1 == 'B') { advance(l);
             while (is_bin_digit(peek(l)) || peek(l) == '_') {
                 if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
             }
@@ -142,7 +143,7 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
             t.int_val = strtoll(buf, NULL, 2);
             return t;
         }
-        if (n1 == 'o' || n1 == 'O') { advance(l); advance(l);
+        if (n1 == 'o' || n1 == 'O') { advance(l);
             while (is_oct_digit(peek(l)) || peek(l) == '_') {
                 if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
             }
@@ -164,6 +165,22 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
             if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
         }
     }
+    /* 类型后缀: u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize f32 f64 f */
+    if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
+        char c = peek(l);
+        /* 确认是后缀而非下一个标识符的开头 */
+        char n1 = peek_n(l, 1);
+        bool is_suffix = false;
+        if (c == 'f' && !is_ident_part(n1)) is_suffix = true;       /* f */
+        else if ((c == 'u' || c == 'i') && is_digit(n1)) is_suffix = true; /* u8 i64 etc */
+        else if ((c == 'u' || c == 'i') && (n1 == 's' || n1 == 'S')) is_suffix = true; /* usize isize */
+
+        if (is_suffix) {
+            /* 消费后缀字符 */
+            while (is_ident_part(peek(l))) advance(l);
+            if (c == 'f') is_float = true;
+        }
+    }
     buf[bi] = '\0';
 
     Re0Token t = make_token(l, is_float ? TK_FLOAT : TK_NUMBER, start);
@@ -175,7 +192,7 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
 static Re0Token scan_string(Re0Lexer *l, Re0Pos start) {
     size_t cap = RE0_INITIAL_STRING_CAPACITY;
     size_t len = 0;
-    char *buf = (char*)malloc(cap);
+    char *buf = (char*)xmalloc(cap);
     if (!buf) {
         re0_error_append(l->errors, RE0_ERR_INTERNAL, re0_span_make(start, cur_pos(l)),
                          l->file_path, "out of memory while scanning string literal");
@@ -221,7 +238,7 @@ static Re0Token scan_string(Re0Lexer *l, Re0Pos start) {
         }
         if (len + 1 >= cap) {
             size_t next_cap = cap > RE0_MAX_STRING_BYTES / 2 ? RE0_MAX_STRING_BYTES + 1 : cap * 2;
-            char *next = (char*)realloc(buf, next_cap);
+            char *next = (char*)xrealloc(buf, next_cap);
             if (!next) {
                 re0_error_append(l->errors, RE0_ERR_INTERNAL,
                                  re0_span_make(start, cur_pos(l)), l->file_path,
@@ -317,10 +334,10 @@ static Re0Token scan_token(Re0Lexer *l) {
 
     if (is_ident_start(c)) {
         int cap = 64; int len = 0;
-        char *buf = (char*)malloc(cap);
+        char *buf = (char*)xmalloc(cap);
         buf[len++] = c;
         while (is_ident_part(peek(l))) {
-            if (len + 1 >= cap) { cap *= 2; buf = (char*)realloc(buf, cap); }
+            if (len + 1 >= cap) { cap *= 2; buf = (char*)xrealloc(buf, cap); }
             buf[len++] = advance(l); l->column++;
         }
         buf[len] = '\0';
@@ -407,6 +424,8 @@ static Re0Token scan_token(Re0Lexer *l) {
         return make_token(l, TK_SLASH, start);
     }
     if (c == '%') return make_token(l, TK_PERCENT, start);
+    if (c == '^') return make_token(l, TK_CARET, start);
+    if (c == '~') return make_token(l, TK_TILDE, start);
 
     re0_error_append(l->errors, RE0_ERR_SYNTAX, re0_span_make(start, cur_pos(l)),
                      l->file_path, "unexpected character '%c'", c);
@@ -422,6 +441,13 @@ bool re0_lexer_tokenize(Re0Lexer *l, const char *source, const char *file_path) 
     l->column = 0;
     l->bol = 0;
     l->had_error = false;
+
+    /* 跳过 UTF-8 BOM (EF BB BF)，许多编辑器/工具会在文件头写入 */
+    if (source && (unsigned char)source[0] == 0xEF &&
+        (unsigned char)source[1] == 0xBB && (unsigned char)source[2] == 0xBF) {
+        l->pos = 3;
+        l->bol = 3;
+    }
 
     /* 重置 token stream（清除上一次词法分析的残留） */
     Re0TokenVec_init(&l->stream.tokens);

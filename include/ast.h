@@ -11,21 +11,23 @@ typedef enum {
     EXPR_UNIT, EXPR_TUPLE, EXPR_BINARY, EXPR_UNARY,
     EXPR_CALL, EXPR_INDEX, EXPR_SELECT,
     EXPR_ARRAY, EXPR_ARRAY_REPEAT, EXPR_STRUCT_INIT,
-    EXPR_LAMBDA, EXPR_IF, EXPR_BLOCK, EXPR_MATCH, EXPR_TRY,
+    EXPR_LAMBDA, EXPR_IF, EXPR_BLOCK, EXPR_MATCH, EXPR_TRY, EXPR_CAST,
 } Re0ExprKind;
 
 typedef enum {
     BINOP_ADD, BINOP_SUB, BINOP_MUL, BINOP_DIV, BINOP_MOD,
     BINOP_EQ, BINOP_NE, BINOP_LT, BINOP_LE, BINOP_GT, BINOP_GE,
-    BINOP_AND, BINOP_OR, BINOP_RANGE, BINOP_SHL, BINOP_SHR,
+    BINOP_AND, BINOP_OR,
+    BINOP_BAND, BINOP_BOR, BINOP_BXOR,
+    BINOP_RANGE, BINOP_SHL, BINOP_SHR,
 } Re0BinOpKind;
 
 typedef enum {
-    UNOP_NEG, UNOP_NOT, UNOP_REF, UNOP_REFMUT, UNOP_DEREF,
+    UNOP_NEG, UNOP_NOT, UNOP_BNOT, UNOP_REF, UNOP_REFMUT, UNOP_DEREF,
 } Re0UnOpKind;
 
 typedef enum {
-    STMT_EXPR, STMT_LET, STMT_ASSIGN, STMT_FIELD_ASSIGN,
+    STMT_EXPR, STMT_LET, STMT_ASSIGN, STMT_FIELD_ASSIGN, STMT_INDEX_ASSIGN,
     STMT_IF, STMT_WHILE, STMT_FOR, STMT_RETURN, STMT_BREAK, STMT_CONTINUE,
     STMT_FUNCTION, STMT_STRUCT, STMT_ENUM, STMT_TRAIT, STMT_IMPL,
     STMT_IMPORT, STMT_MODULE, STMT_EXTERN, STMT_CONST,
@@ -73,6 +75,7 @@ struct Re0Expr {
         Re0ExprMatch match_;
         struct { Re0LambdaParam *params; int param_count; Re0Expr *body; } lambda;
         struct { char *name; Re0StructFieldInit *fields; int field_count; } struct_init;
+        struct { Re0Expr *inner; char *target_type; } cast;
     };
 };
 
@@ -93,6 +96,7 @@ struct Re0Stmt {
         struct { char *name; char *type; Re0Expr *init; } let_stmt;
         struct { char *name; Re0Expr *value; Re0BinOpKind op; } assign;
         struct { Re0Expr *obj; char *field; Re0Expr *value; } field_assign;
+        struct { Re0Expr *target; Re0Expr *index; Re0Expr *value; Re0BinOpKind op; } index_assign;
         struct { Re0IfBranch *branches; int branch_count; Re0Stmt **else_body; int else_count; } if_stmt;
         struct { Re0Expr *cond; Re0Stmt **body; int body_count; } while_stmt;
         struct { char *var; Re0Expr *iter; Re0Stmt **body; int body_count; } for_stmt;

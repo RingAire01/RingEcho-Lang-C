@@ -1,5 +1,7 @@
 #ifndef RE0_H
 #define RE0_H
+#include "re0_limits.h"
+#include "safe.h"
 #include "arena.h"
 #include "vec.h"
 #include "buffer.h"
