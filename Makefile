@@ -103,7 +103,7 @@ RVM_MAIN_OBJ := $(OBJECT_DIR)/$(EXEC)/rvm_main.o
 
 CHECK_FAILURE_TESTS := $(wildcard tests/invalid_*.reo) tests/sema_error.reo
 RUNTIME_FAILURE_TESTS := tests/divzero.reo
-POSITIVE_TESTS := $(filter-out $(CHECK_FAILURE_TESTS) $(RUNTIME_FAILURE_TESTS),$(wildcard tests/*.reo))
+POSITIVE_TESTS := $(filter-out $(CHECK_FAILURE_TESTS) $(RUNTIME_FAILURE_TESTS),$(wildcard tests/*.reo tests/stdlib/*.reo))
 
 .DEFAULT_GOAL := rev
 .PHONY: all build rev rem rvm release debug alpha test test-one check-one test-list clean clean-temp platform-info

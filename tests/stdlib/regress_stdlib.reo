@@ -1,0 +1,44 @@
+// 回归测试: stdlib(.renv/lib/std)可导入且可用
+// 修复点: venv 目录名 .reoenv -> .renv 对齐代码; std/vec.reo 改用真 vec 类型
+import "vec"
+import "string"
+import "math"
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+fn main() {
+    // vec
+    let v = new_vec();
+    push_val(v, 10);
+    push_val(v, 20);
+    push_val(v, 30);
+    check("vec_size", size(v) == 3);
+    check("vec_get", get_val(v, 1) == 20);
+    set_val(v, 1, 99);
+    check("vec_set", get_val(v, 1) == 99);
+    check("vec_last", last_val(v) == 30);
+    check("vec_pop", pop_val(v) == 30);
+    check("vec_size_after_pop", size(v) == 2);
+
+    // string
+    let s = concat("foo", "bar");
+    check("str_concat", equals(s, "foobar"));
+    check("str_length", length(s) == 6);
+    check("str_substring", equals(substring(s, 0, 3), "foo"));
+    check("str_parse_int", parse_int("42") == 42);
+
+    // math
+    check("abs_neg", abs_val(-5) == 5);
+    check("abs_pos", abs_val(5) == 5);
+    check("max", max_val(3, 7) == 7);
+    check("min", min_val(3, 7) == 3);
+
+    println("--- regress_stdlib done ---");
+}
