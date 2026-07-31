@@ -1,0 +1,66 @@
+// 回归测试: ? 运算符对 Option 和 Result 的支持
+// 修复点: backend_c.c EXPR_TRY 按内部类型选 early-return tag
+//         (Result: Err=tag1 提前返回; Option: None=tag0 提前返回)
+//         修复前硬编码 tag==0,导致 Result 在 Ok 时错误提前返回。
+
+fn check(name: str, ok: bool) {
+    if ok {
+        println(str_concat("PASS ", name));
+    } else {
+        println(str_concat("FAIL ", name));
+        exit(1);
+    }
+}
+
+// Option: None=tag0, Some=tag1
+fn safe_div(a: i64, b: i64) -> Option {
+    if b == 0 { return Option::None; }
+    return Option::Some(a / b);
+}
+
+fn use_option_ok() -> Option {
+    let x = safe_div(10, 2)?;
+    return Option::Some(x + 1);
+}
+
+fn use_option_none() -> Option {
+    let x = safe_div(10, 0)?;
+    return Option::Some(x);
+}
+
+// Result: Ok=tag0, Err=tag1
+fn checked_div(a: i64, b: i64) -> Result {
+    if b == 0 { return Result::Err(0); }
+    return Result::Ok(a / b);
+}
+
+fn use_result_ok() -> Result {
+    let x = checked_div(10, 2)?;
+    return Result::Ok(x + 1);
+}
+
+fn use_result_err() -> Result {
+    let x = checked_div(10, 2)?;
+    let y = checked_div(x, 0)?;
+    return Result::Ok(y);
+}
+
+fn main() {
+    // Option ?
+    let a = use_option_ok();
+    check("option_ok_tag", a.tag == 1);
+    check("option_ok_val", a.u.v0 == 6);
+
+    let b = use_option_none();
+    check("option_none_tag", b.tag == 0);
+
+    // Result ? — 关键: Ok(tag0) 不应提前返回
+    let c = use_result_ok();
+    check("result_ok_tag", c.tag == 0);
+    check("result_ok_val", c.u.v0 == 6);
+
+    let d = use_result_err();
+    check("result_err_tag", d.tag == 1);
+
+    println("--- regress_try_result done ---");
+}

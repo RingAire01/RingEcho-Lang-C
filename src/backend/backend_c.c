@@ -1249,14 +1249,20 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
         }
         case EXPR_TRY: {
             /* expr? → GCC statement expression
-             * Option: tag 0=None → early return; Some → extract payload
-             * Result: tag 1=Err → early return; Ok → extract payload
-             * MVP: 统一按 Option 处理（tag 0 = early return） */
+             * Option: None=tag0 提前返回; Some=tag1 取 payload
+             * Result: Err=tag1 提前返回;  Ok=tag0 取 payload
+             * 按内部表达式类型区分 Option/Result(推断不出时默认 Option) */
             int t = c->temp_counter++;
-            re0_buffer_write_fmt(b, "({ Option __t%d = (", t);
+            char inner_type[128] = {0};
+            int is_result =
+                infer_expr_c_type(e->try_.inner, inner_type, sizeof(inner_type)) &&
+                strcmp(inner_type, "Result") == 0;
+            const char *ty = is_result ? "Result" : "Option";
+            int early_tag = is_result ? 1 : 0;
+            re0_buffer_write_fmt(b, "({ %s __t%d = (", ty, t);
             c_gen_expr(c, e->try_.inner);
-            re0_buffer_write_fmt(b, "); if (__t%d.tag == 0) return __t%d; __t%d.u.v0; })",
-                                 t, t, t);
+            re0_buffer_write_fmt(b, "); if (__t%d.tag == %d) return __t%d; __t%d.u.v0; })",
+                                 t, early_tag, t, t);
             break;
         }
         case EXPR_LAMBDA: {

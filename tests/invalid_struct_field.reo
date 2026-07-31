@@ -1,0 +1,8 @@
+// 负向测试: struct 初始化字段校验(应被 rev check 拒绝)
+// 'z' 不是 Point 的字段(多余),且缺少 'y'(缺失)
+struct Point { x: i64, y: i64 }
+
+fn main() {
+    let p = Point { x: 1, z: 2 };
+    println(p.x);
+}

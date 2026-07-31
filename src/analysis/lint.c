@@ -144,8 +144,11 @@ static void lint_stmt(Re0Stmt *s, Re0ErrorList *errors, int depth) {
                                 s->function.name, s->function.body_count, MAX_FUNC_LINES);
             lint_var_count = 0; /* fresh scope per function */
             for (int i = 0; i < s->function.param_count; i++) {
-                lint_var_add(s->function.params[i].name, 0);
-                lint_var_mark_used(s->function.params[i].name); /* params are implicitly used */
+                const char *pn = s->function.params[i].name;
+                lint_var_add(pn, 0);
+                /* self 与 _ 前缀参数视为有意使用,不报 unused */
+                if (strcmp(pn, "self") == 0 || pn[0] == '_')
+                    lint_var_mark_used(pn);
             }
             lint_stmts(s->function.body, s->function.body_count, errors, 0);
             lint_var_finish(errors);
