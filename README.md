@@ -93,4 +93,4 @@ include/
 
 ## License
 
-[MIT](LICENSE) - Copyright (c) 2025-2026 初然Neko (ChuranNeko) & Ringaire
+[MIT](LICENSE) - Copyright (c) 2025-2026 初然 (KaguyaRing) & Ringaire
