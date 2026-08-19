@@ -1,8 +1,8 @@
 #ifndef RE0_MANAGER_H
 #define RE0_MANAGER_H
-#include "re0_gc.h"
-#include "re0_event.h"
-#include "error.h"
+#include "extra/re0_gc.h"
+#include "extra/re0_event.h"
+#include "base/error.h"
 #include <stdbool.h>
 
 #define RE0_MAX_SUBMANAGERS 16

@@ -3,7 +3,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include "re0_log.h"
+#include "base/re0_log.h"
 
 /* ── Checked allocation: OOM 时 abort 并报告 ──
  *

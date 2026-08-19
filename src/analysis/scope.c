@@ -1,5 +1,5 @@
-#include "safe.h"
-#include "scope.h"
+#include "base/safe.h"
+#include "analysis/scope.h"
 #include <stdlib.h>
 #include <string.h>
 

@@ -7,11 +7,11 @@
 #ifndef RE0_WORKSPACE_H
 #define RE0_WORKSPACE_H
 
-#include "ast.h"
-#include "error.h"
-#include "arena.h"
-#include "lexer.h"
-#include "parser.h"
+#include "front/ast.h"
+#include "base/error.h"
+#include "base/arena.h"
+#include "front/lexer.h"
+#include "front/parser.h"
 #include <stdbool.h>
 
 #define RE0_MAX_FILES 64

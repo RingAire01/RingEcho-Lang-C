@@ -1,4 +1,4 @@
-#include "span.h"
+#include "base/span.h"
 
 Re0Pos re0_pos_make(size_t line, size_t col, size_t offset) {
     Re0Pos p = { line, col, offset };

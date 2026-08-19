@@ -1,4 +1,4 @@
-#include "safe.h"
+#include "base/safe.h"
 /*
  * lsp_server.c — RingEcho LSP 服务器
  *
@@ -15,12 +15,16 @@
  *   - textDocument/publishDiagnostics: 推送错误/警告
  */
 
-#include "lsp_json.h"
+#include "lsp/lsp_json.h"
+#include "lsp/lsp_server.h"
 #include "re0.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !defined(RE0_PLATFORM_WINDOWS)
 #include <unistd.h>
+#endif
 
 /* ── 工具：JSON 转义 ── */
 static void json_escape(FILE *f, const char *s) {

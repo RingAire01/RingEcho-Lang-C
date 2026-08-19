@@ -1,5 +1,5 @@
-#include "lint.h"
-#include "re0_limits.h"
+#include "analysis/lint.h"
+#include "base/re0_limits.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>

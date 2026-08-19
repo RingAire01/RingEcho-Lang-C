@@ -1,8 +1,8 @@
-#include "safe.h"
-#include "sema.h"
+#include "base/safe.h"
+#include "analysis/sema.h"
 #include <stdlib.h>
 #include <string.h>
-#include "re0_limits.h"
+#include "base/re0_limits.h"
 
 /* 解析类型名：标准类型 → 类型别名 → 具名 struct/enum（避免具名类型塌缩为 UNIT/UNKNOWN） */
 static Re0Type *resolve_type(Re0Sema *s, const char *name) {
@@ -78,8 +78,20 @@ static Re0Type *infer_type(Re0Sema *s, Re0Expr *e) {
 static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
     if (!e) return re0_type_make(RE0_TYPE_UNIT, NULL);
     switch (e->kind) {
-        case EXPR_INT: return re0_type_make(RE0_TYPE_I64, NULL);
-        case EXPR_FLOAT: return re0_type_make(RE0_TYPE_F64, NULL);
+        case EXPR_INT: {
+            if (e->int_lit.suffix) {
+                Re0Type *st = re0_type_parse(e->int_lit.suffix);
+                if (st && re0_type_is_integer(st->kind)) return st;
+            }
+            return re0_type_make(RE0_TYPE_I64, NULL);
+        }
+        case EXPR_FLOAT: {
+            if (e->float_lit.suffix) {
+                Re0Type *st = re0_type_parse(e->float_lit.suffix);
+                if (st && re0_type_is_float(st->kind)) return st;
+            }
+            return re0_type_make(RE0_TYPE_F64, NULL);
+        }
         case EXPR_BOOL: return re0_type_make(RE0_TYPE_BOOL, NULL);
         case EXPR_CHAR: return re0_type_make(RE0_TYPE_CHAR, NULL);
         case EXPR_STRING: return re0_type_make(RE0_TYPE_STR, NULL);
@@ -171,6 +183,14 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         s->had_error = true;
                     }
                     return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                case UNOP_BNOT:
+                    if (!re0_type_is_integer(operand->kind) && operand->kind != RE0_TYPE_UNKNOWN) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "cannot apply bitwise not to type '%s'",
+                                         re0_type_kind_name(operand->kind));
+                        s->had_error = true;
+                    }
+                    return operand;
             }
             return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
         }
@@ -188,7 +208,6 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         if (msym && msym->type && msym->type->kind == RE0_TYPE_FN &&
                             msym->type->func.ret)
                             return msym->type->func.ret;
-                        return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
                     }
                 }
                 return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
@@ -436,6 +455,15 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                 ? infer_type(s, e->lambda.body) : re0_type_make(RE0_TYPE_UNIT, NULL);
             s->current_scope = saved;
             return re0_type_make_func(params, pc, ret, false, NULL);
+        }
+        case EXPR_CAST: {
+            /* Cast expression: infer target type and validate cast legality */
+            if (e->cast.inner) infer_type(s, e->cast.inner);
+            if (e->cast.target_type) {
+                Re0Type *target = re0_type_parse(e->cast.target_type);
+                if (target) return target;
+            }
+            return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
         }
         default: return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
     }

@@ -1,8 +1,8 @@
-#include "safe.h"
-#include "builtins.h"
-#include "types.h"
-#include "model.h"
-#include "arena.h"
+#include "base/safe.h"
+#include "analysis/builtins.h"
+#include "base/types.h"
+#include "analysis/model.h"
+#include "base/arena.h"
 #include <stdlib.h>
 #include <string.h>
 

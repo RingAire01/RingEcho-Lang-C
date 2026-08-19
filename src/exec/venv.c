@@ -1,7 +1,7 @@
 /*
  * venv.c — RingEcho 虚拟环境管理实现
  */
-#include "venv.h"
+#include "exec/venv.h"
 #include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +19,7 @@
 #include <unistd.h>
 #include <libgen.h>
 #endif
-#include "re0_log.h"
+#include "base/re0_log.h"
 
 /* ── 路径工具 ── */
 
@@ -109,7 +109,7 @@ bool reo_venv_install_std(const char *env_dir) {
     if (!ensure_dir(std_dir)) return false;
 
     for (int i = 0; i < RE0_STD_MODULES_COUNT; i++) {
-        char path[512];
+        char path[600];
         snprintf(path, sizeof(path), "%s/%s.reo", std_dir, RE0_STD_MODULES[i]);
         FILE *f = fopen(path, "w");
         if (!f) continue;
@@ -196,7 +196,7 @@ bool reo_venv_resolve_import(const char *module_name,
         if (access(out_path, R_OK) == 0) return true;
 
         /* 3. 虚拟环境标准库: env_dir/lib/std/module_name.reo */
-        char std_dir[512];
+    char std_dir[600];
         snprintf(std_dir, sizeof(std_dir), "%s/%s/%s", env_dir, RE0_VENV_LIB, RE0_VENV_STD);
         join_path(out_path, cap, std_dir, module_name);
         strncat(out_path, ".reo", cap - strlen(out_path) - 1);
@@ -204,7 +204,13 @@ bool reo_venv_resolve_import(const char *module_name,
     }
 
     /* 4. 全局: ~/.re/lib/module_name.reo */
-    const char *home = getenv("HOME");
+    const char *home =
+#if defined(RE0_PLATFORM_WINDOWS)
+        getenv("USERPROFILE");
+    if (!home) home = getenv("HOME");
+#else
+        getenv("HOME");
+#endif
     if (home) {
         char global_dir[512];
         snprintf(global_dir, sizeof(global_dir), "%s/%s", home, RE0_GLOBAL_LIB_DIR);

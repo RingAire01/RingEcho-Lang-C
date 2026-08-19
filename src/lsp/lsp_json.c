@@ -1,14 +1,14 @@
-#include "safe.h"
+#include "base/safe.h"
 /*
  * lsp_json.c — 精简 JSON 解析器实现
  */
-#include "lsp_json.h"
+#include "lsp/lsp_json.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 /* ── 解析器状态 ── */
-#include "re0_limits.h"
+#include "base/re0_limits.h"
 
 typedef struct {
     const char *src;

@@ -4,7 +4,7 @@
  * 不使用外部 TOML 库，手写极简解析器：
  * 只支持 [section] + key = "value" 格式。
  */
-#include "toml_config.h"
+#include "exec/toml_config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,10 +82,10 @@ ReoTomlConfig reo_toml_load(const char *path) {
             }
         } else if (strcmp(section, "dependencies") == 0) {
             if (cfg.dep_count < RE0_TOML_MAX_DEPS) {
-                strncpy(cfg.deps[cfg.dep_count].name, key,
-                        sizeof(cfg.deps[cfg.dep_count].name) - 1);
-                strncpy(cfg.deps[cfg.dep_count].spec, val,
-                        sizeof(cfg.deps[cfg.dep_count].spec) - 1);
+                snprintf(cfg.deps[cfg.dep_count].name,
+                         sizeof(cfg.deps[cfg.dep_count].name), "%s", key);
+                snprintf(cfg.deps[cfg.dep_count].spec,
+                         sizeof(cfg.deps[cfg.dep_count].spec), "%s", val);
                 cfg.dep_count++;
             }
         }
@@ -105,7 +105,7 @@ bool reo_toml_find_root(char *out_dir, size_t cap) {
     dir[sizeof(dir)-1] = '\0';
 
     for (int i = 0; i < 20; i++) {
-        char toml_path[512];
+        char toml_path[600];
         snprintf(toml_path, sizeof(toml_path), "%s/ringecho.toml", dir);
         if (access(toml_path, R_OK) == 0) {
             strncpy(out_dir, dir, cap - 1);

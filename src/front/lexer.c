@@ -1,5 +1,5 @@
-#include "safe.h"
-#include "lexer.h"
+#include "base/safe.h"
+#include "front/lexer.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -7,6 +7,7 @@
 
 #define RE0_INITIAL_STRING_CAPACITY 64u
 #define RE0_MAX_STRING_BYTES (16u * 1024u * 1024u)
+#define RE0_NUMBER_BUF_CAPACITY 512
 
 void re0_lexer_init(Re0Lexer *l, Re0Arena *arena, Re0ErrorList *errors) {
     l->arena = arena;
@@ -53,6 +54,7 @@ static Re0Token make_token(Re0Lexer *l, Re0TokenKind kind, Re0Pos start) {
     t.float_val = 0.0;
     t.char_val = 0;
     t.lexeme = NULL;
+    t.suffix = NULL;
     return t;
 }
 
@@ -118,8 +120,25 @@ static void skip_whitespace(Re0Lexer *l) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Number scanning — with bounds-checked buffer & suffix preservation */
+/* ------------------------------------------------------------------ */
+
+/* Emit a diagnostic if the number buffer overflows. */
+static bool num_buf_check(Re0Lexer *l, int bi, int cap, Re0Pos start) {
+    if (bi >= cap - 1) {
+        re0_error_append(l->errors, RE0_ERR_SYNTAX,
+                         re0_span_make(start, cur_pos(l)), l->file_path,
+                         "numeric literal too long (max %d digits)", cap - 2);
+        l->had_error = true;
+        return false;  /* signal: stop scanning */
+    }
+    return true;
+}
+
 static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead) {
-    char buf[128]; int bi = 0;
+    char buf[RE0_NUMBER_BUF_CAPACITY];
+    int bi = 0;
     if (negative) buf[bi++] = '-';
     if (lead) buf[bi++] = lead;
 
@@ -127,58 +146,140 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
         char n1 = peek(l);
         if (n1 == 'x' || n1 == 'X') { advance(l);
             while (is_hex_digit(peek(l)) || peek(l) == '_') {
-                if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
+                if (peek(l) != '_') {
+                    if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
+                    buf[bi++] = advance(l);
+                } else {
+                    advance(l);
+                }
             }
             buf[bi] = '\0';
             Re0Token t = make_token(l, TK_NUMBER, start);
             t.int_val = strtoll(buf, NULL, 16);
+            /* consume type suffix after hex literal */
+            if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
+                char c = peek(l); char n2 = peek_n(l, 1);
+                bool is_suffix = false;
+                if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
+                else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
+                else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
+                if (is_suffix) {
+                    int sstart = l->pos;
+                    while (is_ident_part(peek(l))) advance(l);
+                    int slen = l->pos - sstart;
+                    char *suf = (char*)xmalloc(slen + 1);
+                    if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
+                }
+            }
             return t;
         }
         if (n1 == 'b' || n1 == 'B') { advance(l);
             while (is_bin_digit(peek(l)) || peek(l) == '_') {
-                if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
+                if (peek(l) != '_') {
+                    if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
+                    buf[bi++] = advance(l);
+                } else {
+                    advance(l);
+                }
             }
             buf[bi] = '\0';
             Re0Token t = make_token(l, TK_NUMBER, start);
             t.int_val = strtoll(buf, NULL, 2);
+            /* consume type suffix after bin literal */
+            if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
+                char c = peek(l); char n2 = peek_n(l, 1);
+                bool is_suffix = false;
+                if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
+                else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
+                else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
+                if (is_suffix) {
+                    int sstart = l->pos;
+                    while (is_ident_part(peek(l))) advance(l);
+                    int slen = l->pos - sstart;
+                    char *suf = (char*)xmalloc(slen + 1);
+                    if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
+                }
+            }
             return t;
         }
         if (n1 == 'o' || n1 == 'O') { advance(l);
             while (is_oct_digit(peek(l)) || peek(l) == '_') {
-                if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
+                if (peek(l) != '_') {
+                    if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
+                    buf[bi++] = advance(l);
+                } else {
+                    advance(l);
+                }
             }
             buf[bi] = '\0';
             Re0Token t = make_token(l, TK_NUMBER, start);
             t.int_val = strtoll(buf, NULL, 8);
+            /* consume type suffix after oct literal */
+            if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
+                char c = peek(l); char n2 = peek_n(l, 1);
+                bool is_suffix = false;
+                if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
+                else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
+                else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
+                if (is_suffix) {
+                    int sstart = l->pos;
+                    while (is_ident_part(peek(l))) advance(l);
+                    int slen = l->pos - sstart;
+                    char *suf = (char*)xmalloc(slen + 1);
+                    if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
+                }
+            }
             return t;
         }
     }
 
     bool is_float = false;
     while (is_digit(peek(l)) || peek(l) == '_') {
-        if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
+        if (peek(l) != '_') {
+            if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
+            buf[bi++] = advance(l);
+        } else {
+            advance(l);
+        }
     }
     if (peek(l) == '.' && peek_n(l, 1) != '.') {
+        if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) goto finish_decimal;
         buf[bi++] = advance(l);
         is_float = true;
         while (is_digit(peek(l)) || peek(l) == '_') {
-            if (peek(l) != '_') buf[bi++] = advance(l); else advance(l);
+            if (peek(l) != '_') {
+                if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
+                buf[bi++] = advance(l);
+            } else {
+                advance(l);
+            }
         }
     }
-    /* 类型后缀: u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize f32 f64 f */
+finish_decimal:
+    /* Type suffix: u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize f32 f64 f */
     if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
         char c = peek(l);
-        /* 确认是后缀而非下一个标识符的开头 */
-        char n1 = peek_n(l, 1);
+        char n2 = peek_n(l, 1);
         bool is_suffix = false;
-        if (c == 'f' && !is_ident_part(n1)) is_suffix = true;       /* f */
-        else if ((c == 'u' || c == 'i') && is_digit(n1)) is_suffix = true; /* u8 i64 etc */
-        else if ((c == 'u' || c == 'i') && (n1 == 's' || n1 == 'S')) is_suffix = true; /* usize isize */
+        if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
+        else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
+        else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
 
         if (is_suffix) {
-            /* 消费后缀字符 */
+            /* Record suffix start position, then consume all suffix chars */
+            int sstart = l->pos;
             while (is_ident_part(peek(l))) advance(l);
+            int slen = l->pos - sstart;
+            char *suf = (char*)xmalloc(slen + 1);
+            if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; }
             if (c == 'f') is_float = true;
+
+            buf[bi] = '\0';
+            Re0Token t = make_token(l, is_float ? TK_FLOAT : TK_NUMBER, start);
+            if (is_float) t.float_val = atof(buf);
+            else t.int_val = atoll(buf);
+            t.suffix = suf;
+            return t;
         }
     }
     buf[bi] = '\0';
@@ -276,7 +377,7 @@ static Re0Token scan_string(Re0Lexer *l, Re0Pos start) {
 static Re0Token scan_char(Re0Lexer *l, Re0Pos start) {
     char c = 0;
 
-    /* 未终止检测 */
+    /* Unterminated detection */
     if (peek(l) == '\0') {
         re0_error_append(l->errors, RE0_ERR_SYNTAX,
                          re0_span_make(start, cur_pos(l)), l->file_path,
@@ -286,7 +387,7 @@ static Re0Token scan_char(Re0Lexer *l, Re0Pos start) {
     }
 
     if (peek(l) == '\\') {
-        advance(l);                    /* 消费 '\' */
+        advance(l);
         char esc = peek(l);
         if (esc == '\0') {
             re0_error_append(l->errors, RE0_ERR_SYNTAX,
@@ -302,21 +403,20 @@ static Re0Token scan_char(Re0Lexer *l, Re0Pos start) {
             case '\\': c = '\\'; break;
             case '\'': c = '\''; break;
             case '0': c = '\0'; break;
-            default: c = esc; break;   /* passthrough（与 Rust 一致） */
+            default: c = esc; break;
         }
-        advance(l);                    /* 消费转义字母 */
+        advance(l);
     } else {
-        c = advance(l);                /* 消费原始字符 */
+        c = advance(l);
     }
 
-    /* 检查并消费闭合引号 */
     if (peek(l) != '\'') {
         re0_error_append(l->errors, RE0_ERR_SYNTAX,
                          re0_span_make(start, cur_pos(l)), l->file_path,
                          "expected closing quote in char literal");
         l->had_error = true;
     } else {
-        advance(l);                    /* 消费闭合 ' */
+        advance(l);
     }
 
     Re0Token t = make_token(l, TK_CHAR, start);
@@ -335,9 +435,27 @@ static Re0Token scan_token(Re0Lexer *l) {
     if (is_ident_start(c)) {
         int cap = 64; int len = 0;
         char *buf = (char*)xmalloc(cap);
+        if (!buf) {
+            re0_error_append(l->errors, RE0_ERR_INTERNAL, re0_span_make(start, cur_pos(l)),
+                             l->file_path, "out of memory while scanning identifier");
+            l->had_error = true;
+            return make_token(l, TK_ERROR, start);
+        }
         buf[len++] = c;
         while (is_ident_part(peek(l))) {
-            if (len + 1 >= cap) { cap *= 2; buf = (char*)xrealloc(buf, cap); }
+            if (len + 1 >= cap) {
+                cap *= 2;
+                char *next = (char*)xrealloc(buf, cap);
+                if (!next) {
+                    re0_error_append(l->errors, RE0_ERR_INTERNAL,
+                                     re0_span_make(start, cur_pos(l)), l->file_path,
+                                     "out of memory while growing identifier");
+                    l->had_error = true;
+                    free(buf);
+                    return make_token(l, TK_ERROR, start);
+                }
+                buf = next;
+            }
             buf[len++] = advance(l); l->column++;
         }
         buf[len] = '\0';
@@ -442,14 +560,13 @@ bool re0_lexer_tokenize(Re0Lexer *l, const char *source, const char *file_path) 
     l->bol = 0;
     l->had_error = false;
 
-    /* 跳过 UTF-8 BOM (EF BB BF)，许多编辑器/工具会在文件头写入 */
+    /* Skip UTF-8 BOM (EF BB BF) */
     if (source && (unsigned char)source[0] == 0xEF &&
         (unsigned char)source[1] == 0xBB && (unsigned char)source[2] == 0xBF) {
         l->pos = 3;
         l->bol = 3;
     }
 
-    /* 重置 token stream（清除上一次词法分析的残留） */
     Re0TokenVec_init(&l->stream.tokens);
     l->stream.cursor = 0;
 

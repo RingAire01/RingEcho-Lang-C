@@ -10,17 +10,31 @@
  *   rvm remote                   列出可用版本
  */
 
-#include "safe.h"
+#include "base/safe.h"
+#include "platform.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+
+#if defined(RE0_PLATFORM_WINDOWS)
+#include <direct.h>
+#include <process.h>
+#include <windows.h>
+#include <io.h>
+#include <sys/stat.h>
+#define RE0_MKDIR(path) _mkdir(path)
+#define RE0_SEP '\\'
+#else
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <dirent.h>
-#include <errno.h>
+#define RE0_MKDIR(path) mkdir((path), 0755)
+#define RE0_SEP '/'
+#endif
 
 #define RVM_DIR ".rvm"
 #define RVM_VERSIONS_DIR ".rvm/versions"
@@ -48,23 +62,27 @@ static bool valid_version(const char *v) {
 }
 
 static bool make_path(const char *path) {
-    char tmp[512];
+    char tmp[1024];
     snprintf(tmp, sizeof(tmp), "%s", path);
     size_t len = strlen(tmp);
     if (len == 0 || len >= sizeof(tmp)) return false;
-    if (tmp[len-1] == '/') tmp[len-1] = '\0';
+    if (tmp[len-1] == '/' || tmp[len-1] == '\\') tmp[len-1] = '\0';
     for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
+        if (*p == '/' || *p == '\\') {
             *p = '\0';
-            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return false;
+            if (RE0_MKDIR(tmp) != 0 && errno != EEXIST) return false;
             *p = '/';
         }
     }
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return false;
+    if (RE0_MKDIR(tmp) != 0 && errno != EEXIST) return false;
     return true;
 }
 
 static int run_program(const char *prog, char *const argv[]) {
+#if defined(RE0_PLATFORM_WINDOWS)
+    intptr_t rc = _spawnvp(_P_WAIT, prog, (const char *const *)argv);
+    return (rc < 0) ? -1 : (int)rc;
+#else
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
@@ -74,27 +92,50 @@ static int run_program(const char *prog, char *const argv[]) {
     int st = 0;
     while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
+}
+
+static void get_home_dir(char *out, size_t cap) {
+#if defined(RE0_PLATFORM_WINDOWS)
+    const char *home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOMEDRIVE");
+    if (home) {
+        const char *home_path = getenv("HOMEPATH");
+        if (home_path) {
+            snprintf(out, cap, "%s%s", home, home_path);
+            return;
+        }
+    }
+    home = getenv("HOME");
+    if (home) { snprintf(out, cap, "%s", home); return; }
+    snprintf(out, cap, ".");
+#else
+    const char *home = getenv("HOME");
+    if (home) { snprintf(out, cap, "%s", home); return; }
+    snprintf(out, cap, ".");
+#endif
 }
 
 static void ensure_rvm_dir(void) {
-    char *home = getenv("HOME");
-    if (!home) return;
-    char dir[512];
+    char home[512];
+    get_home_dir(home, sizeof(home));
+    home[sizeof(home) - 1] = '\0';
+    char dir[600];
     snprintf(dir, sizeof(dir), "%s/%s", home, RVM_DIR);
-    mkdir(dir, 0755);
+    RE0_MKDIR(dir);
     snprintf(dir, sizeof(dir), "%s/%s", home, RVM_VERSIONS_DIR);
-    mkdir(dir, 0755);
+    RE0_MKDIR(dir);
 }
 
 static void get_versions_dir(char *out, size_t cap) {
-    char *home = getenv("HOME");
-    if (!home) { snprintf(out, cap, "%s", RVM_VERSIONS_DIR); return; }
+    char home[512];
+    get_home_dir(home, sizeof(home));
     snprintf(out, cap, "%s/%s", home, RVM_VERSIONS_DIR);
 }
 
 static void get_current_link(char *out, size_t cap) {
-    char *home = getenv("HOME");
-    if (!home) { snprintf(out, cap, "%s", RVM_CURRENT); return; }
+    char home[512];
+    get_home_dir(home, sizeof(home));
     snprintf(out, cap, "%s/%s", home, RVM_CURRENT);
 }
 
@@ -110,10 +151,10 @@ static int cmd_install(const char *version) {
 
     ensure_rvm_dir();
 
-    char versions_dir[512];
+    char versions_dir[600];
     get_versions_dir(versions_dir, sizeof(versions_dir));
 
-    char version_dir[512];
+    char version_dir[700];
     snprintf(version_dir, sizeof(version_dir), "%s/%s", versions_dir, version);
 
     struct stat st;
@@ -122,25 +163,33 @@ static int cmd_install(const char *version) {
         return 0;
     }
 
-    /* 从 GitHub releases 下载 */
     printf("Installing RingEcho %s...\n", version);
     char url[1024];
+#if defined(RE0_PLATFORM_WINDOWS)
     snprintf(url, sizeof(url),
-             "https://github.com/Ringaire/RingEcho-Lang-C/releases/download/v%s/rem-linux-x86_64",
+             "https://github.com/Ringaire/RingEcho-Lang-C/releases/download/v%s/rev-windows-x86_64.exe",
              version);
+#else
+    snprintf(url, sizeof(url),
+             "https://github.com/Ringaire/RingEcho-Lang-C/releases/download/v%s/rev-linux-x86_64",
+             version);
+#endif
 
     if (!make_path(version_dir)) {
         fprintf(stderr, "cannot create version directory\n");
         return 1;
     }
 
-    char rev_path[640];
-    snprintf(rev_path, sizeof(rev_path), "%s/rev", version_dir);
+    char rev_path[1100];
+    snprintf(rev_path, sizeof(rev_path), "%s/rev%s", version_dir,
+             RE0_PLATFORM_EXECUTABLE_SUFFIX);
     char *curl_argv[] = { "curl", "-sL", url, "-o", rev_path, NULL };
     int rc = run_program("curl", curl_argv);
     if (rc == 0) {
+#if !defined(RE0_PLATFORM_WINDOWS)
         char *chmod_argv[] = { "chmod", "+x", rev_path, NULL };
         run_program("chmod", chmod_argv);
+#endif
     }
     if (rc != 0) {
         printf("Failed to download version %s\n", version);
@@ -163,10 +212,10 @@ static int cmd_use(const char *version) {
         return 1;
     }
 
-    char versions_dir[512];
+    char versions_dir[600];
     get_versions_dir(versions_dir, sizeof(versions_dir));
 
-    char version_dir[512];
+    char version_dir[700];
     snprintf(version_dir, sizeof(version_dir), "%s/%s", versions_dir, version);
 
     struct stat st;
@@ -175,11 +224,15 @@ static int cmd_use(const char *version) {
         return 1;
     }
 
-    /* 更新 current 软链接 */
-    char current_link[512];
+    char current_link[600];
     get_current_link(current_link, sizeof(current_link));
+#if defined(RE0_PLATFORM_WINDOWS)
+    DeleteFileA(current_link);
+    CreateSymbolicLinkA(current_link, version_dir, 0);
+#else
     unlink(current_link);
     symlink(version_dir, current_link);
+#endif
 
     printf("Now using RingEcho %s\n", version);
     printf("Add to PATH: export PATH=\"%s:$PATH\"\n", current_link);
@@ -187,7 +240,7 @@ static int cmd_use(const char *version) {
 }
 
 static int cmd_list(void) {
-    char versions_dir[512];
+    char versions_dir[600];
     get_versions_dir(versions_dir, sizeof(versions_dir));
 
     struct stat st;
@@ -198,6 +251,21 @@ static int cmd_list(void) {
     }
 
     printf("Installed versions:\n");
+#if defined(RE0_PLATFORM_WINDOWS)
+    {
+        WIN32_FIND_DATAA fd;
+        char pattern[700];
+        snprintf(pattern, sizeof(pattern), "%s\\*", versions_dir);
+        HANDLE h = FindFirstFileA(pattern, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.cFileName[0] == '.') continue;
+                printf("  %s\n", fd.cFileName);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
     DIR *d = opendir(versions_dir);
     if (d) {
         struct dirent *de;
@@ -207,29 +275,75 @@ static int cmd_list(void) {
         }
         closedir(d);
     }
+#endif
     return 0;
 }
 
 static int cmd_current(void) {
-    char current_link[512];
+    char current_link[600];
     get_current_link(current_link, sizeof(current_link));
 
     char buf[512];
+#if defined(RE0_PLATFORM_WINDOWS)
+    DWORD len = 0;
+    {
+        HANDLE h = CreateFileA(current_link, GENERIC_READ, FILE_SHARE_READ,
+                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            printf("No version selected (using system default: %s)\n", RVM_DEFAULT_VERSION);
+            return 0;
+        }
+        len = GetFinalPathNameByHandleA(h, buf, sizeof(buf) - 1, 0);
+        CloseHandle(h);
+    }
+    if (len == 0 || len >= sizeof(buf)) {
+        printf("No version selected (using system default: %s)\n", RVM_DEFAULT_VERSION);
+        return 0;
+    }
+    buf[len] = '\0';
+#else
     ssize_t len = readlink(current_link, buf, sizeof(buf) - 1);
     if (len <= 0) {
         printf("No version selected (using system default: %s)\n", RVM_DEFAULT_VERSION);
         return 0;
     }
     buf[len] = '\0';
+#endif
 
-    /* 提取版本号 */
-    char *ver = strrchr(buf, '/');
+    char *ver = strrchr(buf, RE0_SEP);
     if (ver) ver++;
     else ver = buf;
 
     printf("Current: %s\n", ver);
     return 0;
 }
+
+#if defined(RE0_PLATFORM_WINDOWS)
+static int remove_directory_recursive(const char *path) {
+    WIN32_FIND_DATAA fd;
+    char pattern[1024];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        if (RemoveDirectoryA(path)) return 0;
+        if (DeleteFileA(path)) return 0;
+        return -1;
+    }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        char child[1024];
+        snprintf(child, sizeof(child), "%s\\%s", path, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            remove_directory_recursive(child);
+        } else {
+            DeleteFileA(child);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    RemoveDirectoryA(path);
+    return 0;
+}
+#endif
 
 static int cmd_uninstall(const char *version) {
     if (!version) {
@@ -241,10 +355,10 @@ static int cmd_uninstall(const char *version) {
         return 1;
     }
 
-    char versions_dir[512];
+    char versions_dir[600];
     get_versions_dir(versions_dir, sizeof(versions_dir));
 
-    char version_dir[512];
+    char version_dir[700];
     snprintf(version_dir, sizeof(version_dir), "%s/%s", versions_dir, version);
 
     struct stat st;
@@ -253,8 +367,12 @@ static int cmd_uninstall(const char *version) {
         return 1;
     }
 
+#if defined(RE0_PLATFORM_WINDOWS)
+    remove_directory_recursive(version_dir);
+#else
     char *rm_argv[] = { "rm", "-rf", version_dir, NULL };
     run_program("rm", rm_argv);
+#endif
     printf("Removed: RingEcho %s\n", version);
     return 0;
 }

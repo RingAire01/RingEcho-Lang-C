@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-#include "re0_log.h"
+#include "base/re0_log.h"
 #define VEC_DEFAULT_CAP 8
 #define VEC_DECLARE(NAME, T) \
     typedef struct { T *data; size_t len; size_t cap; } NAME; \

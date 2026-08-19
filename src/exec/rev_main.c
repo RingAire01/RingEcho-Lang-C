@@ -1,8 +1,9 @@
-#include "safe.h"
-#include "compiler.h"
+#include "base/safe.h"
+#include "exec/compiler.h"
 #include "platform.h"
-#include "venv.h"
-#include "toml_config.h"
+#include "exec/venv.h"
+#include "exec/toml_config.h"
+#include "lsp/lsp_server.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -228,9 +229,9 @@ int main(int argc, char **argv) {
         return cmd_check(argv[2]);
     }
     if (strcmp(cmd, "lsp") == 0) {
-        extern int lsp_server_run(void);
         return lsp_server_run();
     }
+
 
     if (argc < 3) { print_usage(); return 1; }
 

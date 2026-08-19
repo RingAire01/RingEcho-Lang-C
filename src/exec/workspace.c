@@ -1,19 +1,43 @@
-#include "safe.h"
+#include "base/safe.h"
 /*
  * workspace.c — 多文件工作区实现
  *
  * 从入口文件开始，解析 import 语句，
  * 递归加载 .reo 依赖文件，合并所有顶层语句。
  */
-#include "workspace.h"
-#include "lexer.h"
-#include "parser.h"
-#include "venv.h"
+#include "exec/workspace.h"
+#include "platform.h"
+#include "front/lexer.h"
+#include "front/parser.h"
+#include "exec/venv.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(RE0_PLATFORM_WINDOWS)
+#include <direct.h>
+#include <io.h>
+#define access _access
+#ifndef R_OK
+#define R_OK 4
+#endif
+
+static void dirname_impl(char *path) {
+    if (!path || !*path) return;
+    char *last_sep = strrchr(path, '\\');
+    if (!last_sep) last_sep = strrchr(path, '/');
+    if (last_sep) {
+        *last_sep = '\0';
+        if (!*path) strcpy(path, ".");
+    } else {
+        strcpy(path, ".");
+    }
+}
+#else
 #include <unistd.h>
 #include <libgen.h>
+#define dirname_impl(path) do { char *_p = dirname(path); memmove(path, _p, strlen(_p) + 1); } while(0)
+#endif
 
 void re0_workspace_init(Re0Workspace *ws, const char *entry_path) {
     memset(ws, 0, sizeof(*ws));
@@ -21,8 +45,8 @@ void re0_workspace_init(Re0Workspace *ws, const char *entry_path) {
     char tmp[RE0_MAX_PATH];
     strncpy(tmp, entry_path, sizeof(tmp) - 1);
     tmp[sizeof(tmp)-1] = '\0';
-    strncpy(ws->base_dir, dirname(tmp), sizeof(ws->base_dir) - 1);
-    ws->base_dir[sizeof(ws->base_dir)-1] = '\0';
+    dirname_impl(tmp);
+    snprintf(ws->base_dir, sizeof(ws->base_dir), "%s", tmp);
 }
 
 /* 检查文件是否已加载（去重） */
@@ -95,7 +119,13 @@ static bool resolve_import_path(Re0Stmt *stmt, char *out, size_t out_cap,
     }
 
     /* 3. 全局: ~/.re/lib/mod.reo */
-    const char *home = getenv("HOME");
+    const char *home =
+#if defined(RE0_PLATFORM_WINDOWS)
+        getenv("USERPROFILE");
+    if (!home) home = getenv("HOME");
+#else
+        getenv("HOME");
+#endif
     if (home) {
         if (write_import_path(out, out_cap, "%s/%s/%s.reo", home, RE0_GLOBAL_LIB_DIR, mod, "") &&
             access(out, R_OK) == 0) return true;

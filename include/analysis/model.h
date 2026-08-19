@@ -1,7 +1,7 @@
 #ifndef RE0_MODEL_H
 #define RE0_MODEL_H
-#include "types.h"
-#include "vec.h"
+#include "base/types.h"
+#include "base/vec.h"
 #include <stdbool.h>
 
 /* ── 字段/变体定义 ── */

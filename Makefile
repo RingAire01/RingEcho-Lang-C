@@ -42,6 +42,13 @@ CPPFLAGS := -Iinclude
 CFLAGS_COMMON := -Wno-overlength-strings -Wall -Wextra -Wpedantic -std=c11 -pipe -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?= -pthread
 
+# On Windows, use -lpthread equivalent is built into libwinpthread.
+ifeq ($(PLATFORM),Windows)
+    MKDIR_P := mkdir -p
+else
+    MKDIR_P := mkdir -p
+endif
+
 BUILD_DIR := target/$(CONFIG)
 OBJECT_DIR := $(BUILD_DIR)/obj
 TARGET_REV := $(BUILD_DIR)/rev$(PLATFORM_SUFFIX)
@@ -146,7 +153,7 @@ $(TARGET_RVM): $(RVM_MAIN_OBJ)
 	$(CC) $(CFLAGS) -o "$@" $^ $(LDFLAGS)
 
 $(OBJECT_DIR)/%.o: %.c
-	@mkdir -p "$(dir $@)"
+	@$(MKDIR_P) "$(dir $@)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o "$@" "$<"
 
 test: $(TARGET_REV)

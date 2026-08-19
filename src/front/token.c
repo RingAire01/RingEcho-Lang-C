@@ -1,4 +1,4 @@
-#include "token.h"
+#include "front/token.h"
 #include <string.h>
 
 static const char *kw_names[] = {

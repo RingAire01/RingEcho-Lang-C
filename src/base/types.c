@@ -1,6 +1,6 @@
-#include "safe.h"
-#include "types.h"
-#include "arena.h"
+#include "base/safe.h"
+#include "base/types.h"
+#include "base/arena.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,6 +63,7 @@ size_t re0_type_sizeof(Re0TypeKind k) {
         case RE0_TYPE_I16: case RE0_TYPE_U16: return 2;
         case RE0_TYPE_I32: case RE0_TYPE_U32: return 4;
         case RE0_TYPE_I64: case RE0_TYPE_U64: case RE0_TYPE_ISIZE: case RE0_TYPE_USIZE: return 8;
+        case RE0_TYPE_I128: case RE0_TYPE_U128: return 16;
         case RE0_TYPE_F32: return 4;
         case RE0_TYPE_F64: return 8;
         case RE0_TYPE_BOOL: case RE0_TYPE_CHAR: return 1;
@@ -89,7 +90,7 @@ size_t re0_type_sizeof_full(const Re0Type *t) {
         case RE0_TYPE_TYPEVAR:   return 8;
         case RE0_TYPE_STRUCT: case RE0_TYPE_ENUM: case RE0_TYPE_FN:
         case RE0_TYPE_GENERIC: case RE0_TYPE_UNKNOWN:
-            return 0;   /* 需 model 布局信息 */
+            return 0;   /* requires model layout info */
         default:
             return re0_type_sizeof(t->kind);
     }
@@ -133,7 +134,7 @@ Re0Type *re0_type_make_func(Re0Type **params, int n, Re0Type *ret,
         t->func.params = (Re0Type**)xmalloc(bytes);
     }
     if (!t->func.params) {
-        /* 注意：在 arena 模式下，t 会在 arena 销毁时自动释放，无需手动 free */
+        /* Note: in arena mode, t is freed automatically when arena is destroyed */
         if (!arena) free(t);
         return NULL;
     }
@@ -269,10 +270,10 @@ bool re0_type_equal(const Re0Type *a, const Re0Type *b) {
 bool re0_type_coercible(const Re0Type *from, const Re0Type *to) {
     if (re0_type_equal(from, to)) return true;
     if (!from || !to) return false;
-    /* numeric 隐式转换（整数之间、浮点之间、整数→浮点） */
+    /* numeric implicit conversion (int to int, float to float, int to float) */
     if (re0_type_is_numeric(from->kind) && re0_type_is_numeric(to->kind))
         return true;
-    /* UNKNOWN 可赋值到任何类型（推断未完成时的宽容策略） */
+    /* UNKNOWN is assignable to any type (lenient policy during inference) */
     if (from->kind == RE0_TYPE_UNKNOWN || to->kind == RE0_TYPE_UNKNOWN)
         return true;
     return false;

@@ -11,18 +11,30 @@
  *   rem publish                  发布包
  */
 
-#include "safe.h"
-#include "venv.h"
-#include "toml_config.h"
+#include "base/safe.h"
+#include "platform.h"
+#include "exec/venv.h"
+#include "exec/toml_config.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+
+#if defined(RE0_PLATFORM_WINDOWS)
+#include <direct.h>
+#include <process.h>
+#include <windows.h>
+#include <io.h>
+#include <sys/stat.h>
+#define RE0_MKDIR(path) _mkdir(path)
+#else
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <dirent.h>
-#include <errno.h>
+#define RE0_MKDIR(path) mkdir((path), 0755)
+#endif
 
 static void print_usage(void) {
     printf("RingEcho Module Manager (rem) v0.2.0\n");
@@ -36,9 +48,8 @@ static void print_usage(void) {
     printf("  rem publish                  Publish current package\n");
 }
 
-/* 包目录路径 */
 static void get_packages_dir(char *out, size_t cap) {
-    char env_dir[512];
+    char env_dir[600];
     extern bool reo_venv_detect(char *, size_t);
     if (reo_venv_detect(env_dir, sizeof(env_dir))) {
         snprintf(out, cap, "%s/lib/packages", env_dir);
@@ -49,11 +60,8 @@ static void get_packages_dir(char *out, size_t cap) {
 
 static bool valid_name(const char *name) {
     if (!name || !name[0]) return false;
-    /* 检查是否以点开头（防止隐藏文件/目录）*/
     if (name[0] == '.') return false;
-    /* 检查是否包含连续的点（防止 ..）*/
     if (strstr(name, "..") != NULL) return false;
-    /* 检查字符范围 */
     for (const unsigned char *p = (const unsigned char *)name; *p; p++) {
         if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
               (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return false;
@@ -62,23 +70,27 @@ static bool valid_name(const char *name) {
 }
 
 static bool make_path(const char *path) {
-    char tmp[512];
+    char tmp[1024];
     snprintf(tmp, sizeof(tmp), "%s", path);
     size_t len = strlen(tmp);
     if (len == 0 || len >= sizeof(tmp)) return false;
-    if (tmp[len-1] == '/') tmp[len-1] = '\0';
+    if (tmp[len-1] == '/' || tmp[len-1] == '\\') tmp[len-1] = '\0';
     for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
+        if (*p == '/' || *p == '\\') {
             *p = '\0';
-            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return false;
+            if (RE0_MKDIR(tmp) != 0 && errno != EEXIST) return false;
             *p = '/';
         }
     }
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) return false;
+    if (RE0_MKDIR(tmp) != 0 && errno != EEXIST) return false;
     return true;
 }
 
 static int run_program(const char *prog, char *const argv[]) {
+#if defined(RE0_PLATFORM_WINDOWS)
+    intptr_t rc = _spawnvp(_P_WAIT, prog, (const char *const *)argv);
+    return (rc < 0) ? -1 : (int)rc;
+#else
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
@@ -88,10 +100,37 @@ static int run_program(const char *prog, char *const argv[]) {
     int st = 0;
     while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
     return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
 }
 
+#if defined(RE0_PLATFORM_WINDOWS)
+static int remove_directory_recursive(const char *path) {
+    WIN32_FIND_DATAA fd;
+    char pattern[1024];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        if (RemoveDirectoryA(path)) return 0;
+        if (DeleteFileA(path)) return 0;
+        return -1;
+    }
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        char child[1024];
+        snprintf(child, sizeof(child), "%s\\%s", path, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            remove_directory_recursive(child);
+        } else {
+            DeleteFileA(child);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    RemoveDirectoryA(path);
+    return 0;
+}
+#endif
+
 static int cmd_init(const char *name) {
-    /* 复用 rev init 的逻辑，但通过 rem 触发 */
     extern bool reo_toml_write_default(const char *, const char *);
     extern bool reo_venv_create(const char *);
 
@@ -108,10 +147,8 @@ static int cmd_init(const char *name) {
         return 1;
     }
 
-    /* ringecho.toml */
     reo_toml_write_default(pname, pname);
 
-    /* main.reo */
     char entry_path[512];
     snprintf(entry_path, sizeof(entry_path), "%s/main.reo", pname);
     FILE *f = fopen(entry_path, "w");
@@ -120,7 +157,6 @@ static int cmd_init(const char *name) {
         fclose(f);
     }
 
-    /* .gitignore */
     char gi_path[512];
     snprintf(gi_path, sizeof(gi_path), "%s/.gitignore", pname);
     f = fopen(gi_path, "w");
@@ -129,7 +165,6 @@ static int cmd_init(const char *name) {
         fclose(f);
     }
 
-    /* 虚拟环境 */
     reo_venv_create(pname);
 
     printf("Created project '%s'\n", pname);
@@ -139,7 +174,7 @@ static int cmd_init(const char *name) {
     printf("  %s/.renv/\n", pname);
     printf("\nNext:\n");
     printf("  cd %s\n", pname);
-    printf("  rev build\n", pname);
+    printf("  rev build\n");
     return 0;
 }
 
@@ -153,7 +188,7 @@ static int cmd_install(const char *pkg_name) {
         return 1;
     }
 
-    char pkg_dir[512];
+    char pkg_dir[700];
     get_packages_dir(pkg_dir, sizeof(pkg_dir));
 
     if (!make_path(pkg_dir)) {
@@ -161,18 +196,15 @@ static int cmd_install(const char *pkg_name) {
         return 1;
     }
 
-    /* MVP: 从 GitHub 克隆 */
-    char pkg_path[512];
+    char pkg_path[1024];
     snprintf(pkg_path, sizeof(pkg_path), "%s/%s", pkg_dir, pkg_name);
 
-    /* 检查是否已安装 */
     struct stat st;
     if (stat(pkg_path, &st) == 0) {
         printf("Package '%s' is already installed\n", pkg_name);
         return 0;
     }
 
-    /* 尝试从 GitHub 安装: Ringaire/reo-pkg-<name> */
     char url[600];
     snprintf(url, sizeof(url), "https://github.com/Ringaire/reo-pkg-%s.git", pkg_name);
     char *clone_argv[] = { "git", "clone", "--depth", "1", url, pkg_path, NULL };
@@ -189,7 +221,7 @@ static int cmd_install(const char *pkg_name) {
 }
 
 static int cmd_list(void) {
-    char pkg_dir[512];
+    char pkg_dir[700];
     get_packages_dir(pkg_dir, sizeof(pkg_dir));
 
     struct stat st;
@@ -199,7 +231,6 @@ static int cmd_list(void) {
         return 0;
     }
 
-    /* 读取 ringecho.toml 中的依赖 */
     extern bool reo_toml_find_root(char *, size_t);
     extern ReoTomlConfig reo_toml_load(const char *);
 
@@ -218,8 +249,22 @@ static int cmd_list(void) {
         }
     }
 
-    /* 列出已安装的包 */
     printf("\nInstalled packages:\n");
+#if defined(RE0_PLATFORM_WINDOWS)
+    {
+        WIN32_FIND_DATAA fd;
+        char pattern[1024];
+        snprintf(pattern, sizeof(pattern), "%s\\*", pkg_dir);
+        HANDLE h = FindFirstFileA(pattern, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.cFileName[0] == '.') continue;
+                printf("  %s\n", fd.cFileName);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
     DIR *d = opendir(pkg_dir);
     if (d) {
         struct dirent *de;
@@ -229,6 +274,7 @@ static int cmd_list(void) {
         }
         closedir(d);
     }
+#endif
 
     return 0;
 }
@@ -243,10 +289,10 @@ static int cmd_remove(const char *pkg_name) {
         return 1;
     }
 
-    char pkg_dir[512];
+    char pkg_dir[700];
     get_packages_dir(pkg_dir, sizeof(pkg_dir));
 
-    char pkg_path[512];
+    char pkg_path[1024];
     snprintf(pkg_path, sizeof(pkg_path), "%s/%s", pkg_dir, pkg_name);
 
     struct stat st;
@@ -255,14 +301,22 @@ static int cmd_remove(const char *pkg_name) {
         return 1;
     }
 
+#if defined(RE0_PLATFORM_WINDOWS)
+    if (st.st_mode & S_IFDIR) {
+        remove_directory_recursive(pkg_path);
+    } else {
+        DeleteFileA(pkg_path);
+    }
+#else
     char *rm_argv[] = { "rm", "-rf", pkg_path, NULL };
     run_program("rm", rm_argv);
+#endif
     printf("Removed: %s\n", pkg_name);
     return 0;
 }
 
 static int cmd_update(void) {
-    char pkg_dir[512];
+    char pkg_dir[700];
     get_packages_dir(pkg_dir, sizeof(pkg_dir));
 
     struct stat st;
@@ -272,6 +326,35 @@ static int cmd_update(void) {
     }
 
     printf("Updating all packages...\n");
+#if defined(RE0_PLATFORM_WINDOWS)
+    {
+        WIN32_FIND_DATAA fd;
+        char pattern[1024];
+        snprintf(pattern, sizeof(pattern), "%s\\*", pkg_dir);
+        HANDLE h = FindFirstFileA(pattern, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.cFileName[0] == '.') continue;
+                char sub[1024];
+                snprintf(sub, sizeof(sub), "%s\\%s", pkg_dir, fd.cFileName);
+                char gitdir[1100];
+                snprintf(gitdir, sizeof(gitdir), "%s\\.git", sub);
+                struct stat gst;
+                if (stat(gitdir, &gst) == 0) {
+                    printf("  updating %s\n", fd.cFileName);
+                    char saved[1024];
+                    _getcwd(saved, sizeof(saved));
+                    if (_chdir(sub) == 0) {
+                        char *pull_argv[] = { "git", "pull", "--ff-only", NULL };
+                        _spawnvp(_P_WAIT, "git", (const char *const *)pull_argv);
+                        _chdir(saved);
+                    }
+                }
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
     DIR *d = opendir(pkg_dir);
     if (d) {
         struct dirent *de;
@@ -293,6 +376,7 @@ static int cmd_update(void) {
         }
         closedir(d);
     }
+#endif
     printf("Update complete\n");
     return 0;
 }

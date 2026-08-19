@@ -1,11 +1,11 @@
 #ifndef RE0_SEMA_H
 #define RE0_SEMA_H
-#include "arena.h"
-#include "error.h"
-#include "ast.h"
-#include "scope.h"
-#include "model.h"
-#include "builtins.h"
+#include "base/arena.h"
+#include "base/error.h"
+#include "front/ast.h"
+#include "analysis/scope.h"
+#include "analysis/model.h"
+#include "analysis/builtins.h"
 
 typedef struct {
     Re0Arena          *arena;

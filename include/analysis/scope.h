@@ -1,7 +1,7 @@
 #ifndef RE0_SCOPE_H
 #define RE0_SCOPE_H
-#include "types.h"
-#include "vec.h"
+#include "base/types.h"
+#include "base/vec.h"
 #include <stdbool.h>
 
 typedef struct { char *name; Re0Type *type; bool is_mutable; bool is_function; } Re0Symbol;

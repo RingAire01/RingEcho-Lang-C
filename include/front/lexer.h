@@ -1,8 +1,8 @@
 #ifndef RE0_LEXER_H
 #define RE0_LEXER_H
-#include "arena.h"
-#include "error.h"
-#include "stream.h"
+#include "base/arena.h"
+#include "base/error.h"
+#include "front/stream.h"
 
 typedef struct {
     Re0Arena    *arena;

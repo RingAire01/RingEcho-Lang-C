@@ -1,7 +1,7 @@
 #ifndef RE0_ERROR_H
 #define RE0_ERROR_H
-#include "span.h"
-#include "vec.h"
+#include "base/span.h"
+#include "base/vec.h"
 typedef enum { RE0_ERR_SYNTAX, RE0_ERR_SEMANTIC, RE0_ERR_IO, RE0_ERR_INTERNAL, RE0_WARN } Re0ErrorLevel;
 typedef struct { Re0ErrorLevel level; Re0Span span; const char *file; char *msg; } Re0Error;
 VEC_DECLARE(Re0ErrorVec, Re0Error)

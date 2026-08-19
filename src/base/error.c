@@ -1,5 +1,5 @@
-#include "safe.h"
-#include "error.h"
+#include "base/safe.h"
+#include "base/error.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>

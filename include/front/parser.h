@@ -1,10 +1,10 @@
 #ifndef RE0_PARSER_H
 #define RE0_PARSER_H
-#include "arena.h"
-#include "error.h"
-#include "stream.h"
-#include "ast.h"
-#include "re0_limits.h"
+#include "base/arena.h"
+#include "base/error.h"
+#include "front/stream.h"
+#include "front/ast.h"
+#include "base/re0_limits.h"
 
 typedef struct {
     Re0Arena      *arena;

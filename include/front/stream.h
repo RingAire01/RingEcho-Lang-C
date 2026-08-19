@@ -1,7 +1,7 @@
 #ifndef RE0_STREAM_H
 #define RE0_STREAM_H
-#include "token.h"
-#include "vec.h"
+#include "front/token.h"
+#include "base/vec.h"
 VEC_DECLARE(Re0TokenVec, Re0Token)
 typedef struct {
     Re0TokenVec tokens;

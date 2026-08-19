@@ -1,4 +1,4 @@
-#include "build.h"
+#include "exec/build.h"
 #include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,7 +84,7 @@ void re0_build_init(Re0Build *b, Re0ErrorList *errors) {
     b->cc_path = (env_cc && *env_cc) ? env_cc : RE0_PLATFORM_DEFAULT_C_COMPILER;
     b->output_path = NULL;
     b->tmp_file[0] = '\0';
-    b->keep_c = false;
+    b->keep_c = true;
 }
 
 bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path) {
@@ -112,10 +112,9 @@ bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path)
     const char *cc_opt = getenv("REO_CC_OPT");
     if (!cc_opt || !*cc_opt) cc_opt = "-O1";
 #if defined(RE0_PLATFORM_WINDOWS)
-    /* 使用 CreateProcess 避免命令注入 */
     char args[2048];
-    int args_written = snprintf(args, sizeof(args), "%s %s -pthread \"%s\" -o \"%s\"",
-                               b->cc_path, cc_opt, b->tmp_file, output_path);
+    int args_written = snprintf(args, sizeof(args), "\"%s\" %s -pthread \"%s\" -o \"%s\"",
+                                b->cc_path, cc_opt, b->tmp_file, output_path);
     if (args_written < 0 || (size_t)args_written >= sizeof(args)) {
         re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
                          "compiler arguments exceed limit");
@@ -129,16 +128,16 @@ bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path)
     PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(pi));
     BOOL ok = CreateProcessA(
-        b->cc_path,           // lpApplicationName
-        args,                 // lpCommandLine
-        NULL,                 // lpProcessAttributes
-        NULL,                 // lpThreadAttributes
-        FALSE,                // bInheritHandles
-        0,                    // dwCreationFlags
-        NULL,                 // lpEnvironment
-        NULL,                 // lpCurrentDirectory
-        &si,                  // lpStartupInfo
-        &pi                   // lpProcessInformation
+        NULL,                 /* lpApplicationName: NULL to search PATH via command line */
+        args,                 /* lpCommandLine */
+        NULL,                 /* lpProcessAttributes */
+        NULL,                 /* lpThreadAttributes */
+        FALSE,                /* bInheritHandles */
+        0,                    /* dwCreationFlags */
+        NULL,                 /* lpEnvironment */
+        NULL,                 /* lpCurrentDirectory */
+        &si,                  /* lpStartupInfo */
+        &pi                   /* lpProcessInformation */
     );
     if (!ok) {
         re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,

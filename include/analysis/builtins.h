@@ -1,7 +1,7 @@
 #ifndef RE0_BUILTINS_H
 #define RE0_BUILTINS_H
-#include "types.h"
-#include "vec.h"
+#include "base/types.h"
+#include "base/vec.h"
 
 typedef struct { char *name; Re0Type *type; } Re0BuiltinParam;
 typedef struct {

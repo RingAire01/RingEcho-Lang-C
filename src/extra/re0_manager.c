@@ -1,4 +1,4 @@
-#include "re0_manager.h"
+#include "extra/re0_manager.h"
 
 bool re0_manager_init(Re0Manager *m) {
     if (!m || !m->init) return false;

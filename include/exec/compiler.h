@@ -1,18 +1,18 @@
 #ifndef RE0_COMPILER_H
 #define RE0_COMPILER_H
-#include "arena.h"
-#include "error.h"
-#include "model.h"
-#include "builtins.h"
-#include "lexer.h"
-#include "parser.h"
-#include "sema.h"
-#include "backend.h"
-#include "build.h"
-#include "lint.h"
-#include "re0_gc.h"
-#include "re0_event.h"
-#include "re0_manager.h"
+#include "base/arena.h"
+#include "base/error.h"
+#include "analysis/model.h"
+#include "analysis/builtins.h"
+#include "front/lexer.h"
+#include "front/parser.h"
+#include "analysis/sema.h"
+#include "backend/backend.h"
+#include "exec/build.h"
+#include "analysis/lint.h"
+#include "extra/re0_gc.h"
+#include "extra/re0_event.h"
+#include "extra/re0_manager.h"
 
 typedef struct {
     Re0Arena           *arena;

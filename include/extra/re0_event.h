@@ -1,6 +1,6 @@
 #ifndef RE0_EVENT_H
 #define RE0_EVENT_H
-#include "vec.h"
+#include "base/vec.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <pthread.h>

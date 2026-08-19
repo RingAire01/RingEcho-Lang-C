@@ -1,6 +1,6 @@
-#include "safe.h"
-#include "compiler.h"
-#include "workspace.h"
+#include "base/safe.h"
+#include "exec/compiler.h"
+#include "exec/workspace.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

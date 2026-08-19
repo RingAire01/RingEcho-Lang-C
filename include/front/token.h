@@ -1,6 +1,6 @@
 #ifndef RE0_TOKEN_H
 #define RE0_TOKEN_H
-#include "span.h"
+#include "base/span.h"
 #include <stdint.h>
 #include <stdbool.h>
 typedef enum {
@@ -29,6 +29,8 @@ typedef struct {
     Re0Span span;
     union { char *str_val; int64_t int_val; double float_val; char char_val; };
     char *lexeme;
+    /* Numeric literal type suffix (e.g. "u8", "i16", "f32"). NULL if none. */
+    char *suffix;
 } Re0Token;
 
 const char *re0_token_kind_name(Re0TokenKind k);

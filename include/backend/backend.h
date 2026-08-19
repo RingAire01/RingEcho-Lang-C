@@ -1,10 +1,10 @@
 #ifndef RE0_BACKEND_H
 #define RE0_BACKEND_H
-#include "ast.h"
-#include "buffer.h"
-#include "model.h"
-#include "error.h"
-#include "re0_gc.h"
+#include "front/ast.h"
+#include "base/buffer.h"
+#include "analysis/model.h"
+#include "base/error.h"
+#include "extra/re0_gc.h"
 #include <stdbool.h>
 
 typedef struct Re0Codegen Re0Codegen;

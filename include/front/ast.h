@@ -1,8 +1,8 @@
 #ifndef RE0_AST_H
 #define RE0_AST_H
-#include "span.h"
-#include "types.h"
-#include "vec.h"
+#include "base/span.h"
+#include "base/types.h"
+#include "base/vec.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -56,8 +56,8 @@ struct Re0Expr {
     Re0ExprKind kind; Re0Span span;
     union {
         struct { char *name; } ident;
-        struct { int64_t val; } int_lit;
-        struct { double val; } float_lit;
+        struct { int64_t val; char *suffix; } int_lit;
+        struct { double val; char *suffix; } float_lit;
         struct { char *val; } str_lit;
         struct { char val; } char_lit;
         struct { bool val; } bool_lit;

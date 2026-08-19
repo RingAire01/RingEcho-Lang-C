@@ -1,7 +1,7 @@
 #ifndef RE0_BUILD_H
 #define RE0_BUILD_H
-#include "buffer.h"
-#include "error.h"
+#include "base/buffer.h"
+#include "base/error.h"
 #include <stdbool.h>
 #include <stddef.h>
 

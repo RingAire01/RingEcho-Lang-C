@@ -1,7 +1,7 @@
-#include "safe.h"
-#include "model.h"
-#include "arena.h"
-#include "types.h"
+#include "base/safe.h"
+#include "analysis/model.h"
+#include "base/arena.h"
+#include "base/types.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

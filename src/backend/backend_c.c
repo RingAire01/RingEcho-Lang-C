@@ -1,6 +1,6 @@
-#include "safe.h"
-#include "backend.h"
-#include "re0_limits.h"
+#include "base/safe.h"
+#include "backend/backend.h"
+#include "base/re0_limits.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -148,7 +148,7 @@ static const char *instantiate_generic_struct(Re0Codegen *c, const char *base_na
     snprintf(out, out_sz, "%s_%s", base_name, type_arg);
     if (struct_already_instantiated(out)) return out;
     if (g_struct_instance_count >= MAX_INSTANTIATED) return out;
-    strncpy(g_struct_instances[g_struct_instance_count++], out, 255);
+    snprintf(g_struct_instances[g_struct_instance_count++], sizeof(g_struct_instances[0]), "%s", out);
     return out;
 }
 
@@ -311,8 +311,7 @@ static bool is_already_instantiated(const char *mangled) {
 
 static void mark_instantiated(const char *mangled) {
     if (g_instantiated_count >= MAX_INSTANTIATED) return;
-    strncpy(g_instantiated[g_instantiated_count].name, mangled, 255);
-    g_instantiated[g_instantiated_count].name[255] = '\0';
+    snprintf(g_instantiated[g_instantiated_count].name, sizeof(g_instantiated[0].name), "%s", mangled);
     g_instantiated_count++;
 }
 
@@ -352,8 +351,8 @@ static void instantiate_generic_fn(Re0Codegen *c, Re0Stmt *def,
         pi->def = def;
         pi->type_arg_count = type_arg_count < 8 ? type_arg_count : 8;
         for (int i = 0; i < pi->type_arg_count; i++)
-            strncpy(pi->type_args[i], type_args[i], 63), pi->type_args[i][63] = '\0';
-        strncpy(pi->mangled, mangled, 255), pi->mangled[255] = '\0';
+            snprintf(pi->type_args[i], sizeof(pi->type_args[i]), "%s", type_args[i]);
+        snprintf(pi->mangled, sizeof(pi->mangled), "%s", mangled);
     }
 }
 
@@ -502,8 +501,9 @@ static const char *try_instantiate_generic_call(Re0Codegen *c, const char *fn_na
 /* ── RingEcho type name → C type string ── */
 static const char *reo_type_to_c(const char *t) {
     if (!t) return "int64_t";
-    /* 复合类型注解（parser 重建可能含空格）：跳前导空白后按首字符/前缀分发，
-     * 避免 Vec<>/[T;N]/&T/*T 等注解原样落入 C 生成非法代码。 */
+    /* Compound type annotation (parser may rebuild with spaces):
+     * skip leading whitespace then dispatch by first char/prefix,
+     * avoiding Vec, [T;N], &T, ptr etc. falling into C as illegal code. */
     {
         const char *p = t;
         while (*p == ' ' || *p == '\t') p++;
@@ -612,9 +612,10 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
         case EXPR_STRUCT_INIT:
             if (find_generic_struct(e->struct_init.name) &&
                 e->struct_init.field_count > 0) {
-                char inferred[128];
+                char inferred[256];
                 if (infer_expr_c_type(e->struct_init.fields[0].value, inferred, sizeof(inferred))) {
                     snprintf(type, type_size, "%s_%s", e->struct_init.name, inferred);
+                    type[type_size - 1] = '\0';
                     return true;
                 }
             }
@@ -1270,8 +1271,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             char name[64];
             snprintf(name, sizeof(name), "__reo_lambda_%d", g_lambda_counter++);
             if (g_lambda_count < MAX_LAMBDAS) {
-                strncpy(g_lambdas[g_lambda_count].name, name, 63);
-                g_lambdas[g_lambda_count].name[63] = '\0';
+                snprintf(g_lambdas[g_lambda_count].name, sizeof(g_lambdas[g_lambda_count].name), "%s", name);
                 g_lambdas[g_lambda_count].lambda = e;
                 g_lambda_count++;
             }
@@ -1764,6 +1764,12 @@ static void c_begin(Re0Codegen *c) {
         "    uint64_t sign = ((uint64_t)1) << (bits - 1);\n"
         "    if (u & sign) u |= ~mask;\n"
         "    return (int64_t)u;\n"
+        "}\n"
+        "static int64_t __reo_safe_f2i(double v, const char* ty) {\n"
+        "    if (v != v || v == (double)(1.0/0.0) || v == (double)(-1.0/0.0)) return 0;\n"
+        "    if (v > (double)9223372036854775807LL) return 9223372036854775807LL;\n"
+        "    if (v < (double)(-9223372036854775807LL - 1)) return (-9223372036854775807LL - 1);\n"
+        "    return (int64_t)v;\n"
         "}\n"
         "static void __reo_print_u128(unsigned __int128 v) {\n"
         "    char buf[41]; char *p = buf + sizeof(buf) - 1; *p = '\\0';\n"

@@ -1,5 +1,5 @@
-#include "buffer.h"
-#include "safe.h"
+#include "base/buffer.h"
+#include "base/safe.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

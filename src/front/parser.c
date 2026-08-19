@@ -1,5 +1,5 @@
-#include "safe.h"
-#include "parser.h"
+#include "base/safe.h"
+#include "front/parser.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,7 +19,7 @@ static Re0Token expect(Re0Parser *p, Re0TokenKind k) {
         "expected '%s', got '%s'",
         re0_token_kind_name(k), t ? re0_token_kind_name(t->kind) : "EOF");
     p->had_error = true;
-    Re0Token err = { TK_ERROR, RE0_SPAN_ZERO, {0}, NULL };
+    Re0Token err = { TK_ERROR, RE0_SPAN_ZERO, {0}, NULL, NULL };
     return err;
 }
 
@@ -115,12 +115,12 @@ static Re0Expr *expr_int(Re0Parser *p) {
         e->bool_lit.val = (t.kind == TK_KW_TRUE); return e;
     }
     Re0Expr *e = re0_expr_make(EXPR_INT, t.span);
-    e->int_lit.val = t.int_val; return e;
+    e->int_lit.val = t.int_val; e->int_lit.suffix = t.suffix; return e;
 }
 
 static Re0Expr *expr_float(Re0Parser *p) {
     Re0Token t = advance(p); Re0Expr *e = re0_expr_make(EXPR_FLOAT, t.span);
-    e->float_lit.val = t.float_val; return e;
+    e->float_lit.val = t.float_val; e->float_lit.suffix = t.suffix; return e;
 }
 
 static Re0Expr *expr_string(Re0Parser *p) {
