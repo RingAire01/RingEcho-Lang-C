@@ -41,7 +41,9 @@
 ## 构建产物
 
 ```
-target/<Release|Debug|Alpha>/rem[.exe]
-target/<Release|Debug|Alpha>/obj/...
-target/Temp/              生成的临时 C 文件
+target/<Release|Debug|Alpha>/rev[.exe]   编译器（含 LSP）
+target/<Release|Debug|Alpha>/rem[.exe]   包管理器
+target/<Release|Debug|Alpha>/rvm[.exe]   版本管理器
+target/<Release|Debug|Alpha>/obj/...     中间对象文件
+target/Temp/                             生成的临时 C 文件
 ```
