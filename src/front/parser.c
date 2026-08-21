@@ -7,13 +7,34 @@
 /* ── dynamic raw-array growth for AST list nodes ──
  * Defends against unbounded source constructs (33+ field structs,
  * 65+ import items, ...): grows geometrically instead of overflowing
- * a fixed xcalloc block. xrealloc aborts on OOM, matching safe.h policy.
+ * a fixed xcalloc block.
+ * Arena mode: each growth allocates a fresh arena block and copies;
+ * superseded blocks stay in the arena and die with it (bulk free on
+ * compiler destroy). Heap fallback is only for arena-less unit tests;
+ * xrealloc aborts on OOM per safe.h policy.
  * Consumers iterate [0, count), so the uninitialized tail is never read. */
 #define PARSER_GROW(ptr, count, cap, type)                                  \
     do {                                                                    \
         if ((count) >= (cap)) {                                             \
-            (cap) = (cap) ? (cap) * 2 : 8;                                  \
-            (ptr) = (type *)xrealloc((ptr), sizeof(type) * (size_t)(cap));  \
+            int new_cap_ = (cap) ? (cap) * 2 : 8;                            \
+            type *nd_;                                                      \
+            if (p->arena) {                                                 \
+                nd_ = (type *)re0_arena_alloc_zero(p->arena,                 \
+                        sizeof(type) * (size_t)new_cap_);                    \
+                if (nd_ && (count) > 0)                                      \
+                    memcpy(nd_, (ptr), sizeof(type) * (size_t)(count));      \
+                if (!nd_) {                                                  \
+                    re0_error_append(p->errors, RE0_ERR_INTERNAL,            \
+                        RE0_SPAN_ZERO, NULL, "out of memory growing AST list"); \
+                    p->had_error = true;                                     \
+                    return NULL;                                             \
+                }                                                            \
+            } else {                                                        \
+                nd_ = (type *)xrealloc((ptr),                                \
+                        sizeof(type) * (size_t)new_cap_);                    \
+            }                                                               \
+            (ptr) = nd_;                                                    \
+            (cap) = new_cap_;                                               \
         }                                                                   \
     } while (0)
 
@@ -973,6 +994,7 @@ static Re0Stmt *parse_stmt_inner(Re0Parser *p) {
 
 bool re0_parser_parse(Re0Parser *p, Re0TokenStream *stream) {
     p->stream = stream; p->depth = 0; p->had_error = false; p->had_any_error = false;
+    re0_ast_bind_arena(p->arena);
     while (!re0_stream_eof(p->stream)) {
         Re0Token *t = peek(p); if (!t || t->kind == TK_EOF) break;
         size_t before = re0_stream_pos(p->stream);

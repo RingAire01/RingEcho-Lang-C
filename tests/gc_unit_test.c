@@ -503,6 +503,67 @@ static void test_hybrid_mode(void)
     printf("PASS\n");
 }
 
+/* ════════════════════════════════════════════════════
+ *  TEST 13: 多线程并发 API 压力 — 引擎锁串行化验证
+ * ════════════════════════════════════════════════════ */
+#include <pthread.h>
+
+#define STRESS_THREADS 4
+#define STRESS_ITERS   500
+
+typedef struct {
+    Re0GcEngine *eng;
+    int          tid;
+} StressArg;
+
+static void *stress_worker(void *argp)
+{
+    StressArg *a = (StressArg *)argp;
+    for (int i = 0; i < STRESS_ITERS; i++) {
+        Re0GcObject *n = make_node(a->eng, a->tid * 1000 + i);
+        if (!n) continue;
+        if (i % 3 == 0) re0_gc_engine_add_root(a->eng, n);
+        if (i % 3 == 0) re0_gc_engine_remove_root(a->eng, n);
+        if (i % 5 == 0) re0_gc_engine_collect(a->eng);
+        if (i % 2 == 0) re0_gc_engine_release(a->eng, n);  /* NONE: no-op free */
+        else re0_gc_engine_retain(a->eng, n);
+    }
+    return NULL;
+}
+
+static void test_thread_safety(void)
+{
+    printf("[test] thread safety: concurrent API stress... ");
+
+    Re0GcConfig cfg = re0_gc_config_default();
+    cfg.mode = RE0_GC_MODE_NONE;   /* deterministic: no auto collect */
+    Re0GcEngine *eng = re0_gc_engine_new(cfg);
+    assert(eng);
+
+    pthread_t th[STRESS_THREADS];
+    StressArg args[STRESS_THREADS];
+    for (int i = 0; i < STRESS_THREADS; i++) {
+        args[i].eng = eng;
+        args[i].tid = i;
+        assert(pthread_create(&th[i], NULL, stress_worker, &args[i]) == 0);
+    }
+    for (int i = 0; i < STRESS_THREADS; i++)
+        pthread_join(th[i], NULL);
+
+    Re0GcStats stats;
+    re0_gc_engine_stats(eng, &stats);
+    /* Exact survivors depend on interleaving (a NONE-mode collect can
+     * sweep a released-but-not-yet-recounted object): assert the
+     * invariants that must hold under any schedule — bounded counts,
+     * no corruption, engine still consistent. */
+    assert(stats.alive_count >= 0);
+    assert(stats.alive_count <= (long)STRESS_THREADS * STRESS_ITERS);
+    assert(stats.total_alloc >= STRESS_THREADS * STRESS_ITERS);
+
+    re0_gc_engine_destroy(eng);
+    printf("PASS (alive=%d)\n", stats.alive_count);
+}
+
 int main(void)
 {
     printf("=== GC Engine Unit Tests ===\n\n");
@@ -518,6 +579,7 @@ int main(void)
     test_arc_cycle_collection();
     test_arc_deep_chain();
     test_hybrid_mode();
+    test_thread_safety();
     printf("\n=== All tests passed ===\n");
     return 0;
 }

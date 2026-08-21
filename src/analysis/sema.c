@@ -49,6 +49,7 @@ void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
     Re0StmtVec_init(&s->checked); s->had_error = false; s->infer_depth = 0;
     s->current_fn_return = NULL;
     s->loop_depth = 0; s->fn_depth = 0;
+    s->child_scopes.data = NULL; s->child_scopes.len = 0; s->child_scopes.cap = 0;
 
     /* 预注入 Option/Result 核心枚举 */
     if (!re0_model_find_enum(model, "Option")) {
@@ -61,6 +62,24 @@ void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
         int rp[] = {1, 1};
         re0_model_register_enum(model, "Result", rv, rp, 2);
     }
+}
+
+/* open a child scope owned by the sema instance; re0_sema_destroy frees
+ * every scope opened this way (symbol strdups included). Returns NULL on
+ * allocation failure, in which case the caller keeps the parent scope. */
+Re0Scope *re0_sema_open_scope(Re0Sema *s, Re0Scope *parent) {
+    Re0Scope *sc = re0_scope_new(parent);
+    if (!sc) return NULL;
+    if (s->child_scopes.len >= s->child_scopes.cap) {
+        size_t nc = s->child_scopes.cap ? s->child_scopes.cap * 2 : 16;
+        Re0Scope **nd = (Re0Scope**)realloc(s->child_scopes.data,
+                                            nc * sizeof(Re0Scope*));
+        if (!nd) { re0_scope_free(sc); return NULL; }
+        s->child_scopes.data = nd;
+        s->child_scopes.cap = nc;
+    }
+    s->child_scopes.data[s->child_scopes.len++] = sc;
+    return sc;
 }
 
 static Re0Type *infer_type(Re0Sema *s, Re0Expr *e);
@@ -441,7 +460,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
         case EXPR_LAMBDA: {
             /* lambda: 开子作用域绑定参数，推断 Fn(params, ret) */
             Re0Scope *saved = s->current_scope;
-            s->current_scope = re0_scope_new(s->current_scope);
+            s->current_scope = re0_sema_open_scope(s, s->current_scope);
             Re0Type *params[64];
             int pc = e->lambda.param_count > 64 ? 64 : e->lambda.param_count;
             for (int i = 0; i < pc; i++) {
@@ -521,7 +540,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             break;
         case STMT_IF: {
             Re0Scope *saved = s->current_scope;
-            s->current_scope = re0_scope_new(s->current_scope);
+            s->current_scope = re0_sema_open_scope(s, s->current_scope);
             for (int i = 0; i < stmt->if_stmt.branch_count; i++) {
                 infer_type(s, stmt->if_stmt.branches[i].cond);
                 for (int j = 0; j < stmt->if_stmt.branches[i].body_count; j++)
@@ -535,7 +554,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
         }
         case STMT_WHILE: {
             Re0Scope *saved = s->current_scope;
-            s->current_scope = re0_scope_new(s->current_scope);
+            s->current_scope = re0_sema_open_scope(s, s->current_scope);
             infer_type(s, stmt->while_stmt.cond);
             s->loop_depth++;
             for (int i = 0; i < stmt->while_stmt.body_count; i++)
@@ -546,7 +565,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
         }
         case STMT_FOR: {
             Re0Scope *saved = s->current_scope;
-            s->current_scope = re0_scope_new(s->current_scope);
+            s->current_scope = re0_sema_open_scope(s, s->current_scope);
             /* 按迭代器推循环变量类型：range→i64，Vec/Array/Slice→元素，str→char，其余→i64 */
             Re0Expr *iter = stmt->for_stmt.iter;
             Re0Type *iter_ty = iter ? infer_type(s, iter) : NULL;
@@ -651,7 +670,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
                                   stmt->function.type_params,
                                   stmt->function.type_param_count);
 
-            s->current_scope = re0_scope_new(s->global_scope);
+            s->current_scope = re0_sema_open_scope(s, s->global_scope);
             for (int i = 0; i < stmt->function.param_count; i++) {
                 Re0Type *pt = resolve_type(s, stmt->function.params[i].ptype);
                 if (!pt) pt = re0_type_make(RE0_TYPE_I64, NULL);
@@ -870,7 +889,7 @@ static void check_stmt_inner(Re0Sema *s, Re0Stmt *stmt) {
             for (int i = 0; i < stmt->impl.method_count; i++) {
                 Re0Stmt *m = stmt->impl.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
-                s->current_scope = re0_scope_new(s->global_scope);
+                s->current_scope = re0_sema_open_scope(s, s->global_scope);
                 Re0Type *self_ty = re0_type_make_named(RE0_TYPE_STRUCT, sn, NULL);
                 re0_scope_define(s->current_scope, "self", self_ty, false);
                 for (int j = 0; j < m->function.param_count; j++) {
@@ -923,6 +942,14 @@ bool re0_sema_check(Re0Sema *s, Re0StmtVec *stmts) {
 }
 
 void re0_sema_destroy(Re0Sema *s) {
+    if (!s) return;
     Re0StmtVec_free(&s->checked);
+    /* free all tracked child scopes before the global scope (they may
+     * still point at it as parent, but only names are heap-owned here) */
+    for (size_t i = 0; i < s->child_scopes.len; i++)
+        re0_scope_free(s->child_scopes.data[i]);
+    free(s->child_scopes.data);
+    s->child_scopes.data = NULL;
+    s->child_scopes.len = 0; s->child_scopes.cap = 0;
     re0_scope_free(s->global_scope);
 }

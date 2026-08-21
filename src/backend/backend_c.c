@@ -1631,10 +1631,16 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 if (!m || m->kind != STMT_FUNCTION) continue;
                 char self_ptr_type[160];
                 snprintf(self_ptr_type, sizeof(self_ptr_type), "%s*", s->impl.name);
+                /* temp-patch AST, generate, restore: leaving the stack buffer
+                 * pointer in the AST would dangle on any later traversal
+                 * (LSP re-checks, IR backend pass, ...) */
+                int self_idx = -1;
                 for (int j = 0; j < m->function.param_count; j++) {
                     if (strcmp(m->function.params[j].name, "self") == 0 &&
-                        !m->function.params[j].ptype)
+                        !m->function.params[j].ptype) {
                         m->function.params[j].ptype = self_ptr_type;
+                        self_idx = j;
+                    }
                 }
                 /* 临时替换为 mangled 名 */
                 char *orig_name = m->function.name;
@@ -1644,6 +1650,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 m->function.name = (char*)mangled;
                 c_gen_stmt(c, m, depth);
                 m->function.name = orig_name;
+                if (self_idx >= 0) m->function.params[self_idx].ptype = NULL;
             }
             break;
         }
@@ -1674,10 +1681,14 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 if (!m || m->kind != STMT_FUNCTION) continue;
                 char self_ptr_type[160];
                 snprintf(self_ptr_type, sizeof(self_ptr_type), "%s*", s->component.name);
+                /* temp-patch AST, generate, restore: see STMT_IMPL */
+                int self_idx = -1;
                 for (int j = 0; j < m->function.param_count; j++) {
                     if (strcmp(m->function.params[j].name, "self") == 0 &&
-                        !m->function.params[j].ptype)
+                        !m->function.params[j].ptype) {
                         m->function.params[j].ptype = self_ptr_type;
+                        self_idx = j;
+                    }
                 }
                 char *orig_name = m->function.name;
                 char mangled_buf[256];
@@ -1686,6 +1697,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 m->function.name = (char*)mangled;
                 c_gen_stmt(c, m, depth);
                 m->function.name = orig_name;
+                if (self_idx >= 0) m->function.params[self_idx].ptype = NULL;
             }
             break;
         }

@@ -167,7 +167,9 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
                     int sstart = l->pos;
                     while (is_ident_part(peek(l))) advance(l);
                     int slen = l->pos - sstart;
-                    char *suf = (char*)xmalloc(slen + 1);
+                    /* arena-owned: the token outlives the scan (AST keeps
+                     * suffix pointers), so it must die with the arena */
+                    char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
                     if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
                 }
             }
@@ -196,7 +198,7 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
                     int sstart = l->pos;
                     while (is_ident_part(peek(l))) advance(l);
                     int slen = l->pos - sstart;
-                    char *suf = (char*)xmalloc(slen + 1);
+                    char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
                     if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
                 }
             }
@@ -225,7 +227,7 @@ static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead)
                     int sstart = l->pos;
                     while (is_ident_part(peek(l))) advance(l);
                     int slen = l->pos - sstart;
-                    char *suf = (char*)xmalloc(slen + 1);
+                    char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
                     if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
                 }
             }
@@ -270,7 +272,7 @@ finish_decimal:
             int sstart = l->pos;
             while (is_ident_part(peek(l))) advance(l);
             int slen = l->pos - sstart;
-            char *suf = (char*)xmalloc(slen + 1);
+            char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
             if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; }
             if (c == 'f') is_float = true;
 

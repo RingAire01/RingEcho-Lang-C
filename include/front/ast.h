@@ -3,6 +3,7 @@
 #include "base/span.h"
 #include "base/types.h"
 #include "base/vec.h"
+#include "base/arena.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -122,5 +123,10 @@ VEC_DECLARE(Re0StmtVec, Re0Stmt*)
 
 Re0Expr *re0_expr_make(Re0ExprKind kind, Re0Span span);
 Re0Stmt *re0_stmt_make(Re0StmtKind kind, Re0Span span);
+
+/* Bind the arena used by re0_expr_make/re0_stmt_make. Call before parsing;
+ * pass NULL to fall back to heap allocation (unit tests). Nodes allocated
+ * from the arena are freed in bulk with the arena — no per-node destroy. */
+void re0_ast_bind_arena(Re0Arena *arena);
 
 #endif

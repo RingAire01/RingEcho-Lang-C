@@ -6,8 +6,19 @@
 #include "gc_roots.h"
 #include "gc_stats.h"
 #include "gc_events.h"
+#include "platform.h"
 #include <stddef.h>
 #include <stdbool.h>
+
+#if defined(RE0_PLATFORM_WINDOWS)
+/* avoid pulling windows.h into every consumer */
+void *re0_gc_mutex_create(void);
+void  re0_gc_mutex_destroy(void *m);
+void  re0_gc_mutex_lock(void *m);
+void  re0_gc_mutex_unlock(void *m);
+#else
+#include <pthread.h>
+#endif
 
 /* ════════════════════════════════════════════════════════════
  *  Re0GcEngine — GC 引擎门面
@@ -25,6 +36,14 @@
  *    HYBRID    — OWNED 即时释放 + 其余 tracing（接口预留）
  *
  *  所有关键操作通过 Re0GcListeners 广播事件。
+ *
+ *  线程模型（重要）：
+ *    引擎所有公开 API 由内部互斥锁串行化（粗粒度，正确优先）。
+ *    所有 API 均可在任意线程调用，但单个引擎实例上的操作不会
+ *    并发执行 —— 无读并发路径，吞吐换正确性。
+ *    回调（trace/dtor/listener）在锁内执行：回调内不得调用同一
+ *    引擎的其他 API（自锁死锁，release_chain 的 GRAY 重入防护
+ *    同样覆盖 dtor 跨链释放场景）。
  * ════════════════════════════════════════════════════════════ */
 
 typedef struct {
@@ -37,6 +56,11 @@ typedef struct {
     int            alloc_since_gc;  /* 自上次回收后的分配计数 */
     int            next_threshold;  /* AUTO 模式下次触发阈值 */
     bool           collecting;      /* 正在回收（防重入） */
+#if defined(RE0_PLATFORM_WINDOWS)
+    void          *lock;            /* CRITICAL_SECTION* */
+#else
+    pthread_mutex_t lock;           /* 全局互斥锁（粗粒度） */
+#endif
 } Re0GcEngine;
 
 /* ── 生命周期 ── */
