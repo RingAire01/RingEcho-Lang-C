@@ -87,8 +87,28 @@ void re0_build_init(Re0Build *b, Re0ErrorList *errors) {
     b->keep_c = true;
 }
 
+/* Paths and options are embedded into a quoted CreateProcessA command line
+ * (Windows) — a '"' inside would escape the quoting and inject extra args.
+ * Such paths are never legitimate (illegal filename chars on Windows). */
+static bool has_embedded_quote(const char *s) {
+    if (!s) return false;
+    return strchr(s, '"') != NULL;
+}
+
 bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path) {
     if (!b || !c_code || !output_path) return false;
+    if (has_embedded_quote(output_path) || has_embedded_quote(b->cc_path)) {
+        re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                         "output path or compiler path contains a double quote");
+        return false;
+    }
+
+    const char *cc_env_opt = getenv("REO_CC_OPT");
+    if (has_embedded_quote(cc_env_opt)) {
+        re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                         "REO_CC_OPT contains a double quote");
+        return false;
+    }
 
     if (!make_temp_path(b, b->tmp_file, sizeof(b->tmp_file), "re0_codegen", ".c"))
         return false;

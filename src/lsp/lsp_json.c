@@ -72,12 +72,12 @@ static JVal *parse_object(Parser *p) {
     while (p->pos < p->len && p->src[p->pos] != '}') {
         skip_ws(p);
         char *key = parse_string_raw(p);
-        if (!key) { free(v); return NULL; }
+        if (!key) { json_free(v); return NULL; }
         skip_ws(p);
         if (p->pos < p->len && p->src[p->pos] == ':') p->pos++;
         skip_ws(p);
         JVal *val = parse_value(p);
-        if (!val) { free(key); free(v); return NULL; }
+        if (!val) { free(key); json_free(v); return NULL; }
         if (v->obj.count >= cap) {
             cap = cap ? cap * 2 : 8;
             v->obj.keys = xrealloc(v->obj.keys, cap * sizeof(char*));
@@ -90,7 +90,8 @@ static JVal *parse_object(Parser *p) {
         if (p->pos < p->len && p->src[p->pos] == ',') p->pos++;
         skip_ws(p);
     }
-    if (p->pos < p->len) p->pos++; /* skip } */
+    if (p->pos >= p->len) { json_free(v); return NULL; } /* unclosed '{' */
+    p->pos++; /* skip } */
     return v;
 }
 
@@ -103,7 +104,7 @@ static JVal *parse_array(Parser *p) {
     skip_ws(p);
     while (p->pos < p->len && p->src[p->pos] != ']') {
         JVal *item = parse_value(p);
-        if (!item) { free(v); return NULL; }
+        if (!item) { json_free(v); return NULL; }
         if (v->arr.count >= cap) {
             cap = cap ? cap * 2 : 8;
             v->arr.items = xrealloc(v->arr.items, cap * sizeof(JVal*));
@@ -113,7 +114,8 @@ static JVal *parse_array(Parser *p) {
         if (p->pos < p->len && p->src[p->pos] == ',') p->pos++;
         skip_ws(p);
     }
-    if (p->pos < p->len) p->pos++; /* skip ] */
+    if (p->pos >= p->len) { json_free(v); return NULL; } /* unclosed '[' */
+    p->pos++; /* skip ] */
     return v;
 }
 
@@ -163,6 +165,11 @@ static JVal *parse_value_impl(Parser *p) {
         char *end;
         double d = strtod(p->src + p->pos, &end);
         size_t consumed = (size_t)(end - (p->src + p->pos));
+        /* Reject zero-progress numbers ("-", "-x"): parse_array/parse_object
+         * loops would never advance and would allocate until OOM abort.
+         * Reject overruns too: strtod reads to NUL, which may lie past
+         * the length-bounded region of non-terminated buffers. */
+        if (consumed == 0 || consumed > p->len - p->pos) return NULL;
         p->pos += consumed;
         JVal *v = (JVal*)xcalloc(1, sizeof(JVal));
         v->type = J_NUM; v->n = d;
@@ -173,7 +180,12 @@ static JVal *parse_value_impl(Parser *p) {
 
 JVal *json_parse(const char *text, size_t len) {
     Parser p = { text, 0, len, 0 };
-    return parse_value(&p);
+    JVal *v = parse_value(&p);
+    if (!v) return NULL;
+    /* Reject trailing garbage after the top-level value. */
+    skip_ws(&p);
+    if (p.pos < p.len) { json_free(v); return NULL; }
+    return v;
 }
 
 void json_free(JVal *v) {

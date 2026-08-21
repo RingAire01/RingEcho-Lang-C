@@ -37,10 +37,12 @@ void re0_gc_engine_unlink_obj(Re0GcEngine *eng, Re0GcObject *obj)
     eng->obj_count--;
 }
 
-/* 摘除 + 统计 + 析构 + 释放（arc/hybrid 的标准释放路径） */
+/* 摘除 + 根集摘除 + 统计 + 析构 + 释放（arc/hybrid/sweep 的标准释放路径）。
+ * 根集同步摘除：被销毁对象的 root 记录若残留，下一次 mark 会解引用悬空指针。 */
 void re0_gc_engine_destroy_obj(Re0GcEngine *eng, Re0GcObject *obj)
 {
     if (!eng || !obj) return;
+    re0_gc_roots_remove(&eng->roots, obj);
     re0_gc_engine_unlink_obj(eng, obj);
     re0_gc_stats_on_free(&eng->stats, obj->size);
     re0_gc_object_destroy(obj);
@@ -54,9 +56,7 @@ static int engine_collect_dangling(Re0GcEngine *eng)
     while (obj) {
         Re0GcObject *next = obj->next;
         if (obj->ref_count <= 0 && obj->kind != RE0_PTR_KIND_BORROWED) {
-            re0_gc_engine_unlink_obj(eng, obj);
-            re0_gc_stats_on_free(&eng->stats, obj->size);
-            re0_gc_object_destroy(obj);
+            re0_gc_engine_destroy_obj(eng, obj);
             freed++;
         }
         obj = next;
@@ -188,6 +188,14 @@ char *re0_gc_engine_strdup(Re0GcEngine *eng, const char *s)
     Re0GcObject *obj = re0_gc_engine_alloc(
         eng, len, RE0_PTR_KIND_OWNED, NULL, NULL);
     if (!obj) return NULL;
+    /* The caller only receives the raw payload pointer and cannot root it,
+     * so root it here: otherwise the next tracing collect would sweep the
+     * string while it is still in use. It stays reachable until the engine
+     * is destroyed (or the object is explicitly released via the API). */
+    if (!re0_gc_roots_add(&eng->roots, obj)) {
+        re0_gc_engine_destroy_obj(eng, obj);
+        return NULL;
+    }
     memcpy(obj->ptr, s, len);
     return (char *)obj->ptr;
 }

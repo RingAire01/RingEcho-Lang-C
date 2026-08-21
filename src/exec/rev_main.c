@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "no virtual environment found\n");
             return 1;
         }
-        fprintf(stderr, "usage: rem venv <init|activate>\n");
+            fprintf(stderr, "usage: rev venv <init|activate>\n");
         return 1;
     }
     if (strcmp(cmd, "build") == 0 && argc < 3) {
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
         extern ReoTomlConfig reo_toml_load(const char *);
         char root[512];
         if (!reo_toml_find_root(root, sizeof(root))) {
-            fprintf(stderr, "no ringecho.toml found (run 'rem init' first)\n");
+            fprintf(stderr, "no ringecho.toml found (run 'rev init' first)\n");
             return 1;
         }
         char toml_path[512];
@@ -200,6 +200,18 @@ int main(int argc, char **argv) {
         ReoTomlConfig cfg = reo_toml_load(toml_path);
         if (!cfg.valid) {
             fprintf(stderr, "cannot parse ringecho.toml\n");
+            return 1;
+        }
+        /* ringecho.toml is untrusted input: entry/package_name must stay
+         * inside the project (no '..', no absolute path, no quotes). */
+        extern bool re0_is_safe_rel_path(const char *);
+        if (!re0_is_safe_rel_path(cfg.entry)) {
+            fprintf(stderr, "invalid entry '%s' in ringecho.toml\n", cfg.entry);
+            return 1;
+        }
+        if (!re0_is_safe_rel_path(cfg.package_name) ||
+            strchr(cfg.package_name, '"') != NULL) {
+            fprintf(stderr, "invalid package name '%s' in ringecho.toml\n", cfg.package_name);
             return 1;
         }
         char entry_path[512];
@@ -225,7 +237,7 @@ int main(int argc, char **argv) {
         return ok ? 0 : 1;
     }
     if (strcmp(cmd, "check") == 0) {
-        if (argc < 3) { fprintf(stderr, "usage: rem check <file.reo>\n"); return 1; }
+        if (argc < 3) { fprintf(stderr, "usage: rev check <file.reo>\n"); return 1; }
         return cmd_check(argv[2]);
     }
     if (strcmp(cmd, "lsp") == 0) {

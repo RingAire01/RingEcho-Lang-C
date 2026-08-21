@@ -30,6 +30,11 @@ typedef struct {
 
 void re0_workspace_init(Re0Workspace *ws, const char *entry_path);
 
+/* Validate an untrusted relative path (import module, toml entry, ...):
+ * rejects absolute paths, '..' segments, and ':' (drive letters / NTFS ADS),
+ * on both '/' and '\' separators. Single source of truth for path safety. */
+bool re0_is_safe_rel_path(const char *path);
+
 /* 解析 import，递归加载依赖文件，合并所有顶层语句到 out。
  * 已加载文件不会重复加载（去重）。
  * arena 用于 AST 分配，errors 用于报告 IO 错误。

@@ -11,7 +11,7 @@
  *   7. 统计数据正确性
  */
 
-#include "re0_gc.h"
+#include "extra/re0_gc.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>

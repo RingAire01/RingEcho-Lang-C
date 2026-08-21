@@ -81,17 +81,26 @@ static bool write_import_path(char *out, size_t out_cap, const char *format,
     return true;
 }
 
-static bool is_safe_module_path(const char *mod) {
-    if (!mod || !*mod) return false;
-    if (mod[0] == '/') return false;
-    for (const char *p = mod; *p; ) {
+/* Single source of truth for untrusted relative-path validation.
+ * Handles both separators so Windows backslash tricks cannot bypass
+ * the '..' check; rejects ':' to block drive letters and NTFS ADS. */
+bool re0_is_safe_rel_path(const char *path) {
+    if (!path || !*path) return false;
+    if (path[0] == '/' || path[0] == '\\') return false;
+    for (const char *p = path; *p; ) {
         const char *seg = p;
-        while (*p && *p != '/') p++;
+        while (*p && *p != '/' && *p != '\\') p++;
         size_t seglen = (size_t)(p - seg);
         if (seglen == 2 && seg[0] == '.' && seg[1] == '.') return false;
-        if (*p == '/') p++;
+        for (size_t i = 0; i < seglen; i++)
+            if (seg[i] == ':') return false;
+        if (*p == '/' || *p == '\\') p++;
     }
     return true;
+}
+
+static bool is_safe_module_path(const char *mod) {
+    return re0_is_safe_rel_path(mod);
 }
 
 static bool resolve_import_path(Re0Stmt *stmt, char *out, size_t out_cap,

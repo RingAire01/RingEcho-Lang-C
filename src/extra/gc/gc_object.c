@@ -16,7 +16,10 @@ Re0GcObject *re0_gc_object_alloc(size_t size, Re0PtrKind kind,
     obj->ptr       = payload;
     obj->size      = size;
     obj->kind      = kind;
-    obj->ref_count = (kind == RE0_PTR_KIND_OWNED || kind == RE0_PTR_KIND_BORROWED) ? 1 : 0;
+    /* Allocation transfers one reference to the caller, for every kind.
+     * (Previously NULLABLE/NONNULL/WEAK started at 0, so the first
+     * release under ARC destroyed an object other holders still used.) */
+    obj->ref_count = 1;
     obj->color     = RE0_GC_COLOR_WHITE;
     obj->trace     = trace;
     obj->dtor      = dtor;
@@ -26,7 +29,7 @@ Re0GcObject *re0_gc_object_alloc(size_t size, Re0PtrKind kind,
 }
 
 Re0GcObject *re0_gc_object_alloc_zero(size_t size, Re0PtrKind kind,
-                                       Re0GcTraceFn trace, Re0GcDtorFn dtor)
+                                        Re0GcTraceFn trace, Re0GcDtorFn dtor)
 {
     Re0GcObject *obj = re0_gc_object_alloc(size, kind, trace, dtor);
     if (obj && obj->ptr) memset(obj->ptr, 0, size);
@@ -44,7 +47,7 @@ Re0GcObject *re0_gc_object_wrap(void *ptr, size_t size, Re0PtrKind kind,
     obj->ptr       = ptr;
     obj->size      = size;
     obj->kind      = kind;
-    obj->ref_count = (kind == RE0_PTR_KIND_OWNED || kind == RE0_PTR_KIND_BORROWED) ? 1 : 0;
+    obj->ref_count = 1;
     obj->color     = RE0_GC_COLOR_WHITE;
     obj->trace     = trace;
     obj->dtor      = dtor;

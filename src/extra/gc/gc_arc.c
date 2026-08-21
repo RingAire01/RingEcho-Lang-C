@@ -52,6 +52,13 @@ void re0_gc_arc_release_chain(Re0GcEngine *eng, Re0GcObject *start)
 {
     if (!eng || !start) return;
 
+    /* Reentry guard: GRAY means "already queued in an ongoing release
+     * chain". Destroying it here would double-free when the outer chain
+     * pops it; re-releasing it would corrupt the in-flight traversal.
+     * Typical trigger: a dtor releases a member that another dtor in the
+     * same chain has already queued. */
+    if (start->color == RE0_GC_COLOR_GRAY) return;
+
     ArcWorkQueue wq = { NULL, 0, 0 };
     if (!arc_wq_push(&wq, start)) return;
     start->color = RE0_GC_COLOR_GRAY;

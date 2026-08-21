@@ -21,9 +21,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #if !defined(RE0_PLATFORM_WINDOWS)
 #include <unistd.h>
+#endif
+
+#if defined(RE0_PLATFORM_WINDOWS)
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 /* ── 工具：JSON 转义 ── */
@@ -76,20 +82,22 @@ static void lsp_send_diagnostics(const char *uri, Re0ErrorList *errors) {
     fprintf(f, ",\"diagnostics\":[");
 
     bool first = true;
-    for (size_t i = 0; i < Re0ErrorVec_len(&errors->errors); i++) {
-        Re0Error *e = &errors->errors.data[i];
-        if (e->level == RE0_WARN) continue; /* 只报 error，不报 warning */
-        if (!first) fputc(',', f);
-        first = false;
-        fprintf(f, "{\"range\":{\"start\":{\"line\":%zu,\"character\":%zu},"
-                   "\"end\":{\"line\":%zu,\"character\":%zu}},"
-                   "\"severity\":1,\"source\":\"reoc\",\"message\":",
-                e->span.start.line > 0 ? e->span.start.line - 1 : 0,
-                e->span.start.column > 0 ? e->span.start.column - 1 : 0,
-                e->span.end.line > 0 ? e->span.end.line - 1 : 0,
-                e->span.end.column > 0 ? e->span.end.column - 1 : 0);
-        json_escape(f, e->msg ? e->msg : "unknown error");
-        fputc('}', f);
+    if (errors) {
+        for (size_t i = 0; i < Re0ErrorVec_len(&errors->errors); i++) {
+            Re0Error *e = &errors->errors.data[i];
+            if (e->level == RE0_WARN) continue; /* 只报 error，不报 warning */
+            if (!first) fputc(',', f);
+            first = false;
+            fprintf(f, "{\"range\":{\"start\":{\"line\":%zu,\"character\":%zu},"
+                       "\"end\":{\"line\":%zu,\"character\":%zu}},"
+                       "\"severity\":1,\"source\":\"reoc\",\"message\":",
+                    e->span.start.line > 0 ? e->span.start.line - 1 : 0,
+                    e->span.start.column > 0 ? e->span.start.column - 1 : 0,
+                    e->span.end.line > 0 ? e->span.end.line - 1 : 0,
+                    e->span.end.column > 0 ? e->span.end.column - 1 : 0);
+            json_escape(f, e->msg ? e->msg : "unknown error");
+            fputc('}', f);
+        }
     }
 
     fprintf(f, "]}}");
@@ -111,6 +119,17 @@ static void lsp_send_diagnostics(const char *uri, Re0ErrorList *errors) {
 static void run_diagnostics(const char *uri, const char *source) {
     Re0Compiler comp;
     re0_compiler_init(&comp, &re0_backend_c);
+    if (comp.arena == NULL) {
+        /* arena allocation failed: lexer/parser/sema/codegen are
+         * uninitialized (destroying them would be UB). errors/model/
+         * builtins/bus are initialized, so report the OOM diagnostic. */
+        lsp_send_diagnostics(uri, &comp.errors);
+        re0_error_list_free(&comp.errors);
+        re0_model_free(&comp.model);
+        re0_builtin_free(&comp.builtins);
+        re0_event_bus_free(&comp.bus);
+        return;
+    }
 
     bool ok = re0_lexer_tokenize(&comp.lexer, source, uri);
     if (ok) ok = re0_parser_parse(&comp.parser, &comp.lexer.stream);
@@ -135,6 +154,18 @@ static const char *extract_uri(JVal *params) {
     return json_str(json_get(td, "uri"), NULL);
 }
 
+/* Case-insensitive header-name match (LSP headers are case-insensitive,
+ * and hand-rolled clients get this wrong surprisingly often). */
+static bool header_matches(const char *header, const char *name) {
+    while (*name) {
+        if (tolower((unsigned char)*header) != tolower((unsigned char)*name))
+            return false;
+        header++;
+        name++;
+    }
+    return true;
+}
+
 /* ── 读取一条 JSON-RPC 消息 ── */
 static char *read_message(size_t *out_len) {
     /* 读取 Content-Length 头 */
@@ -146,9 +177,12 @@ static char *read_message(size_t *out_len) {
         while (hlen > 0 && (header[hlen-1] == '\r' || header[hlen-1] == '\n'))
             header[--hlen] = '\0';
         if (hlen == 0) break; /* 空行 = 头结束 */
-        if (strncmp(header, "Content-Length:", 15) == 0) {
+        if (header_matches(header, "Content-Length:")) {
             long cl = atol(header + 15);
-            if (cl < 0 || cl > (long)RE0_MAX_LSP_MESSAGE) { content_len = 0; break; }
+            if (cl <= 0 || cl > (long)RE0_MAX_LSP_MESSAGE) {
+                fprintf(stderr, "[lsp] invalid Content-Length '%s'\n", header);
+                return NULL; /* unframeable stream: stop */
+            }
             content_len = (size_t)cl;
         }
     }
@@ -162,6 +196,12 @@ static char *read_message(size_t *out_len) {
         if (n == 0) break;
         total += n;
     }
+    if (total < content_len) {
+        /* truncated body: EOF mid-message. A partial JSON would produce
+         * garbage diagnostics — reject it. */
+        free(body);
+        return NULL;
+    }
     body[total] = '\0';
     *out_len = total;
     return body;
@@ -169,13 +209,19 @@ static char *read_message(size_t *out_len) {
 
 /* ── LSP 主循环 ── */
 int lsp_server_run(void) {
-    bool initialized __attribute__((unused)) = false;
+#if defined(RE0_PLATFORM_WINDOWS)
+    /* Text-mode stdin/stdout translate \r\n ↔ \n and treat 0x1A as EOF,
+     * corrupting the byte-exact Content-Length framing. */
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+
     bool shutdown_req = false;
 
     while (!shutdown_req) {
         size_t msg_len = 0;
         char *raw = read_message(&msg_len);
-        if (!raw) break; /* stdin closed */
+        if (!raw) break; /* stdin closed or unframeable */
 
         JVal *msg = json_parse(raw, msg_len);
         free(raw);
@@ -184,10 +230,10 @@ int lsp_server_run(void) {
         const char *method = json_str(json_get(msg, "method"), "");
         JVal *params = json_get(msg, "params");
         JVal *id_val = json_get(msg, "id");
-        int id = (int)json_num_val(id_val, -1);
+        double id_num = json_num_val(id_val, -1.0);
+        int id = (id_num >= 0.0 && id_num <= 2147483647.0) ? (int)id_num : -1;
 
         if (strcmp(method, "initialize") == 0) {
-            initialized = true;
             lsp_send_response(id,
                 "{\"capabilities\":{"
                 "\"textDocumentSync\":1,"  /* full sync */
@@ -202,7 +248,8 @@ int lsp_server_run(void) {
             lsp_send_response(id, "null");
         } else if (strcmp(method, "exit") == 0) {
             json_free(msg);
-            break;
+            /* LSP spec: exit without a prior shutdown must return 1 */
+            return shutdown_req ? 0 : 1;
         } else if (strcmp(method, "textDocument/didOpen") == 0) {
             const char *uri = extract_uri(params);
             const char *text = extract_text(params);

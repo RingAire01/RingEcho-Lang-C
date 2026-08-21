@@ -54,6 +54,8 @@ static void print_usage(void) {
 
 static bool valid_version(const char *v) {
     if (!v || !v[0]) return false;
+    /* path traversal forms must never reach the versions directory */
+    if (strcmp(v, ".") == 0 || strcmp(v, "..") == 0) return false;
     for (const unsigned char *p = (const unsigned char *)v; *p; p++) {
         if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
               (*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == '_')) return false;

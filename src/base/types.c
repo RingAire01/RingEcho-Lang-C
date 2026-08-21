@@ -112,7 +112,26 @@ Re0Type *re0_type_make_array(Re0Type *inner, size_t n, void *arena) {
 
 Re0Type *re0_type_make_tuple(Re0Type **elems, int n, void *arena) {
     Re0Type *t = re0_type_make(RE0_TYPE_TUPLE, arena);
-    if (t) { t->tuple.elems = elems; t->tuple.count = n; }
+    if (!t) return NULL;
+
+    t->tuple.elems = NULL;
+    t->tuple.count = n;
+    if (n <= 0 || !elems) return t;
+
+    /* Copy the element array: callers routinely pass stack buffers
+     * (sema.c infer_type), so borrowing the pointer would dangle. */
+    size_t bytes = (size_t)n * sizeof(*elems);
+    if (arena) {
+        t->tuple.elems = (Re0Type**)re0_arena_alloc_zero((Re0Arena*)arena, bytes);
+    } else {
+        t->tuple.elems = (Re0Type**)xmalloc(bytes);
+    }
+    if (!t->tuple.elems) {
+        /* Note: in arena mode, t is freed automatically when arena is destroyed */
+        if (!arena) free(t);
+        return NULL;
+    }
+    memcpy(t->tuple.elems, elems, bytes);
     return t;
 }
 
@@ -289,6 +308,8 @@ static bool re0_split_parse(const char *s, Re0Type **out, int *out_n, int max) {
     while (*p) {
         char c = *p;
         if (c == '<' || c == '[' || c == '(') {
+            /* depth cap: rejects pathological nesting before st[] overflows */
+            if (sp >= (int)sizeof(st)) return false;
             st[sp++] = c;
         } else if (c == '>') {
             if (prev && *prev == '-') { prev = p; p++; continue; }

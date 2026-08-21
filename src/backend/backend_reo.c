@@ -16,16 +16,34 @@
 #define MAX_VARS  RE0_MAX_REO_VARS
 #define MAX_STRUCTS RE0_MAX_REO_STRUCTS
 
-/* ── struct field offset tracking ── */
-static struct { char *name; int offsets[16]; int count; } reo_structs[MAX_STRUCTS];
+/* ── struct registration (informational: name + field count) ──
+ * Field offsets are not stored: the legacy offsets[16] array was write-only
+ * dead data whose fixed capacity overflowed on 17+ field structs. */
+static struct { char *name; int count; } reo_structs[MAX_STRUCTS];
 static int reo_struct_count = 0;
 
-static void reo_register_struct(const char *name, int count) {
-    if (reo_struct_count >= MAX_STRUCTS) return;
-    reo_structs[reo_struct_count].name = strdup(name);
+static void reo_register_struct(Re0Codegen *c, const char *name, int count) {
+    if (reo_struct_count >= MAX_STRUCTS) {
+        if (c && c->errors)
+            re0_error_append(c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
+                             "reo backend: struct table full (%d)", MAX_STRUCTS);
+        return;
+    }
+    char *dup = strdup(name);
+    if (!dup) {
+        if (c && c->errors)
+            re0_error_append(c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
+                             "reo backend: out of memory in reo_register_struct");
+        return;
+    }
+    reo_structs[reo_struct_count].name = dup;
     reo_structs[reo_struct_count].count = count;
-    for (int i = 0; i < count; i++) reo_structs[reo_struct_count].offsets[i] = i * 8;
     reo_struct_count++;
+}
+
+static void clear_structs(void) {
+    for (int i = 0; i < reo_struct_count; i++) free(reo_structs[i].name);
+    reo_struct_count = 0;
 }
 
 typedef struct {
@@ -310,7 +328,7 @@ static void emit_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             emit(c, "    JMP L%d_loop", c->temp_counter);
             break;
         case STMT_STRUCT:
-            reo_register_struct(s->struct_decl.name, s->struct_decl.field_count);
+            reo_register_struct(c, s->struct_decl.name, s->struct_decl.field_count);
             break;
         default:
             break;
@@ -324,6 +342,7 @@ static void emit_body(Re0Codegen *c, Re0Stmt **body, int count) {
 
 static void reo_begin(Re0Codegen *c) {
     clear_vars();
+    clear_structs();
     emit(c, "; RingEcho ISA generated code");
     emit(c, "");
     emit(c, "    JMP main_");
@@ -335,6 +354,7 @@ static void reo_end(Re0Codegen *c) {
     emit(c, "    CALL main");
     emit(c, "    HALT");
     clear_vars();
+    clear_structs();
 }
 
 Re0Backend re0_backend_reo = { "reo", reo_begin, reo_end, eval_expr, emit_stmt };
