@@ -1,0 +1,35 @@
+/* storage-type regressions: values must store in their declared type,
+ * not silently widen to i64:
+ * - float array literals (previously truncated into int64[] storage)
+ * - float array repeat
+ * - struct field of f32 printed through println
+ * - array element type flows through indexing and arithmetic
+ */
+struct P { x: f32 }
+
+fn struct_point() {
+    let p = P { x: 1.5 };
+    println(p.x);           /* 1.5 */
+}
+
+fn main() {
+    /* float array literal keeps float storage */
+    let arr = [1.5, 2.5, 3.5];
+    println(arr[0]);        /* 1.5 */
+    println(arr[2]);        /* 3.5 */
+
+    /* float array repeat */
+    let rep = [0.5; 4];
+    println(rep[3]);        /* 0.5 */
+
+    /* int arrays unchanged */
+    let ints = [1, 2, 3];
+    println(ints[1]);       /* 2 */
+
+    /* struct field float prints as float (was %lld -> 1) */
+    struct_point();
+
+    /* element type flows: arr[0] + arr[1] is float math */
+    let sum = arr[0] + arr[1];
+    println(sum);           /* 4 */
+}

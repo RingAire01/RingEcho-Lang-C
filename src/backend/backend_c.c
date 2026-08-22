@@ -541,12 +541,17 @@ static const char *reo_type_to_c(const char *t) {
     return t;
 }
 
-/* Check if an expression is float-typed */
+/* Check if an expression is float-typed.
+ * Falls back to the full infer_expr_c_type so struct field selects,
+ * casts and call results classify correctly too (p.x with x: f32). */
 static bool expr_is_float(Re0Expr *e) {
     if (!e) return false;
     if (e->kind == EXPR_FLOAT) return true;
     if (e->kind == EXPR_BINARY) return expr_is_float(e->binary.left) || expr_is_float(e->binary.right);
     if (e->kind == EXPR_IDENT) return var_is_float(e->ident.name);
+    char t[128];
+    if (infer_expr_c_type(e, t, sizeof(t)))
+        return strcmp(t, "float") == 0 || strcmp(t, "double") == 0;
     return false;
 }
 
@@ -692,12 +697,32 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             }
             break;
         case EXPR_ARRAY:
-        case EXPR_ARRAY_REPEAT:
+        case EXPR_ARRAY_REPEAT: {
+            /* arrays store element type: int64 or double storage */
+            if (e->kind == EXPR_ARRAY && e->array.count > 0) {
+                char et[128];
+                if (infer_expr_c_type(e->array.elems[0], et, sizeof(et)) &&
+                    (strcmp(et, "float") == 0 || strcmp(et, "double") == 0))
+                    { known = "double*"; break; }
+            } else if (e->kind == EXPR_ARRAY_REPEAT && e->array_repeat.value) {
+                char et[128];
+                if (infer_expr_c_type(e->array_repeat.value, et, sizeof(et)) &&
+                    (strcmp(et, "float") == 0 || strcmp(et, "double") == 0))
+                    { known = "double*"; break; }
+            }
             known = "int64_t*";
             break;
-        case EXPR_INDEX:
-            known = "int64_t";
+        }
+        case EXPR_INDEX: {
+            /* element access: follow the collection's element type */
+            char base[128];
+            if (infer_expr_c_type(e->index.target, base, sizeof(base)) &&
+                strcmp(base, "double*") == 0)
+                known = "double";
+            else
+                known = "int64_t";
             break;
+        }
         case EXPR_CAST:
             known = reo_type_to_c(e->cast.target_type);
             break;
@@ -1338,21 +1363,51 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 re0_buffer_write_str(b, "__reo_array_repeat(0, 0)");
                 break;
             }
-            re0_buffer_write_str(b, "__reo_array_dup((const int64_t[]){");
-            for (int i = 0; i < e->array.count; i++) {
-                if (i > 0) re0_buffer_write_str(b, ", ");
-                c_gen_expr(c, e->array.elems[i]);
+            /* element-wise type: any float element makes a double[] array
+             * (previously all arrays were int64[] and truncated floats) */
+            bool is_float = false;
+            for (int i = 0; i < e->array.count && !is_float; i++) {
+                char et[128];
+                if (infer_expr_c_type(e->array.elems[i], et, sizeof(et)))
+                    is_float = strcmp(et, "float") == 0 || strcmp(et, "double") == 0;
             }
-            re0_buffer_write_fmt(b, "}, %d)", e->array.count);
+            if (is_float) {
+                re0_buffer_write_str(b, "__reo_array_dup_f64((const double[]){");
+                for (int i = 0; i < e->array.count; i++) {
+                    if (i > 0) re0_buffer_write_str(b, ", ");
+                    c_gen_expr(c, e->array.elems[i]);
+                }
+                re0_buffer_write_fmt(b, "}, %d)", e->array.count);
+            } else {
+                re0_buffer_write_str(b, "__reo_array_dup((const int64_t[]){");
+                for (int i = 0; i < e->array.count; i++) {
+                    if (i > 0) re0_buffer_write_str(b, ", ");
+                    c_gen_expr(c, e->array.elems[i]);
+                }
+                re0_buffer_write_fmt(b, "}, %d)", e->array.count);
+            }
             break;
         }
         case EXPR_ARRAY_REPEAT: {
-            re0_buffer_write_str(b, "__reo_array_repeat((int64_t)(");
-            if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
-            else re0_buffer_write_str(b, "0");
-            re0_buffer_write_str(b, "), ");
-            c_gen_expr(c, e->array_repeat.value);
-            re0_buffer_write_char(b, ')');
+            /* [value; n]: float values need the double-typed helper */
+            char et[128];
+            bool rep_float = infer_expr_c_type(e->array_repeat.value, et, sizeof(et)) &&
+                             (strcmp(et, "float") == 0 || strcmp(et, "double") == 0);
+            if (rep_float) {
+                re0_buffer_write_str(b, "__reo_array_repeat_f64((int64_t)(");
+                if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
+                else re0_buffer_write_str(b, "0");
+                re0_buffer_write_str(b, "), ");
+                c_gen_expr(c, e->array_repeat.value);
+                re0_buffer_write_char(b, ')');
+            } else {
+                re0_buffer_write_str(b, "__reo_array_repeat((int64_t)(");
+                if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
+                else re0_buffer_write_str(b, "0");
+                re0_buffer_write_str(b, "), ");
+                c_gen_expr(c, e->array_repeat.value);
+                re0_buffer_write_char(b, ')');
+            }
             break;
         }
         case EXPR_INDEX: {
@@ -2024,6 +2079,21 @@ static void c_begin(Re0Codegen *c) {
         "    int64_t* a = (int64_t*)malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));\n"
         "    if (!a) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
         "    if (n > 0) memcpy(a, src, sizeof(int64_t) * (size_t)n);\n"
+        "    return a;\n"
+        "}\n"
+        /* float arrays: same shape as int64 arrays but double-typed storage */
+        "static double* __reo_array_dup_f64(const double* src, int64_t n) {\n"
+        "    if (n < 0) n = 0;\n"
+        "    double* a = (double*)malloc(sizeof(double) * (size_t)(n > 0 ? n : 1));\n"
+        "    if (!a) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
+        "    if (n > 0) memcpy(a, src, sizeof(double) * (size_t)n);\n"
+        "    return a;\n"
+        "}\n"
+        "static double* __reo_array_repeat_f64(int64_t n, double val) {\n"
+        "    if (n < 0) n = 0;\n"
+        "    double* a = (double*)malloc(sizeof(double) * (size_t)(n > 0 ? n : 1));\n"
+        "    if (!a) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
+        "    for (int64_t i = 0; i < n; i++) a[i] = val;\n"
         "    return a;\n"
         "}\n"
         /* svec helpers: string vector { char** data; len; cap }, elements are strdup'd strings */
