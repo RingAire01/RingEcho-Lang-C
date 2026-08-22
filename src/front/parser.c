@@ -976,7 +976,7 @@ static Re0Stmt *parse_stmt_inner(Re0Parser *p) {
     if (e && e->kind == EXPR_INDEX &&
         (check(p, TK_EQUAL) || check(p, TK_PLUSEQUAL) || check(p, TK_MINUSEQUAL) ||
          check(p, TK_STAREQUAL) || check(p, TK_SLASHEQUAL))) {
-        Re0BinOpKind op = BINOP_ADD;
+        Re0BinOpKind op = BINOP_ASSIGN_SENTINEL;
         if (check(p, TK_EQUAL)) advance(p);
         else if (check(p, TK_PLUSEQUAL)) { advance(p); op = BINOP_ADD; }
         else if (check(p, TK_MINUSEQUAL)) { advance(p); op = BINOP_SUB; }

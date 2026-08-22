@@ -108,8 +108,8 @@ REV_MAIN_OBJ := $(OBJECT_DIR)/$(EXEC)/rev_main.o
 REM_MAIN_OBJ := $(OBJECT_DIR)/$(EXEC)/rem_main.o
 RVM_MAIN_OBJ := $(OBJECT_DIR)/$(EXEC)/rvm_main.o
 
-CHECK_FAILURE_TESTS := $(wildcard tests/invalid_*.reo) tests/sema_error.reo
-RUNTIME_FAILURE_TESTS := tests/divzero.reo
+CHECK_FAILURE_TESTS := $(filter-out tests/invalid_array_oob.reo,$(wildcard tests/invalid_*.reo)) tests/sema_error.reo
+RUNTIME_FAILURE_TESTS := tests/divzero.reo tests/invalid_array_oob.reo
 POSITIVE_TESTS := $(filter-out $(CHECK_FAILURE_TESTS) $(RUNTIME_FAILURE_TESTS),$(wildcard tests/*.reo tests/stdlib/*.reo))
 
 .DEFAULT_GOAL := rev

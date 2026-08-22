@@ -1,0 +1,35 @@
+/* fat-pointer array regressions:
+ * - bounds-checked reads/writes (OOB aborts with a clear message)
+ * - negative index rejection
+ * - len() builtin
+ * - for-in over int/float arrays (literal and variable)
+ */
+fn main() {
+    /* len() */
+    let a = [10, 20, 30];
+    println(len(a));            /* 3 */
+    let f = [1.5, 2.5];
+    println(len(f));            /* 2 */
+
+    /* checked read + write */
+    a[1] = 99;
+    println(a[1]);              /* 99 */
+
+    /* compound assignment through the checked path */
+    a[1] += 1;
+    println(a[1]);              /* 100 */
+
+    /* for-in int array (literal) */
+    let sum = 0;
+    for x in [10, 20, 30] { sum = sum + x; }
+    println(sum);               /* 60 */
+
+    /* for-in float array (variable) */
+    let fs = 0.0;
+    for x in f { fs = fs + x; }
+    println(fs);                /* 4 */
+
+    /* element type flows: float array arithmetic */
+    let s = f[0] + f[1];
+    println(s);                 /* 4 */
+}

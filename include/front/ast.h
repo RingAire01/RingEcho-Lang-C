@@ -21,6 +21,7 @@ typedef enum {
     BINOP_AND, BINOP_OR,
     BINOP_BAND, BINOP_BOR, BINOP_BXOR,
     BINOP_RANGE, BINOP_SHL, BINOP_SHR,
+    BINOP_ASSIGN_SENTINEL, /* plain '=' in compound-assign statements; never a real operator */
 } Re0BinOpKind;
 
 typedef enum {

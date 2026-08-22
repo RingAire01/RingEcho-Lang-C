@@ -507,7 +507,7 @@ static const char *reo_type_to_c(const char *t) {
     {
         const char *p = t;
         while (*p == ' ' || *p == '\t') p++;
-        if (*p == '[') return "int64_t*";   /* [T; N] / [T] → boxed array/slice pointer */
+        if (*p == '[') return "__reo_arr_t";   /* [T; N] / [T] -> fat-pointer array with bounds checks */
         if (*p == '&') return "int64_t";    /* &T / &mut T → boxed reference */
         if (*p == '*') return "void*";      /* *T → raw pointer */
         if (strncmp(p, "Vec", 3) == 0) {
@@ -571,14 +571,21 @@ static bool expr_is_string(Re0Expr *e) {
     return false;
 }
 
+/* whether an identifier refers to a fat-pointer array variable
+ * (for for-in array iteration) */
+static bool expr_is_array_var(Re0Expr *e) {
+    if (!e || e->kind != EXPR_IDENT) return false;
+    const char *t = var_c_type(e->ident.name);
+    return t && (strcmp(t, "__reo_arr_t") == 0 || strcmp(t, "__reo_arrf_t") == 0);
+}
+
 /* whether expression is a vec (__reo_vec_t*): used for for-in Vec iteration */
 static bool expr_is_vec(Re0Expr *e) {
     if (!e) return false;
     if (e->kind == EXPR_IDENT) {
         const char *t = var_c_type(e->ident.name);
         return t && strcmp(t, "__reo_vec_t*") == 0;
-    }
-    if (e->kind == EXPR_CALL && e->call.callee &&
+    }    if (e->kind == EXPR_CALL && e->call.callee &&
         e->call.callee->kind == EXPR_IDENT &&
         builtin_returns_vec(e->call.callee->ident.name))
         return true;
@@ -698,29 +705,29 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             break;
         case EXPR_ARRAY:
         case EXPR_ARRAY_REPEAT: {
-            /* arrays store element type: int64 or double storage */
+            /* fat-pointer arrays: element type selects __reo_arr_t/__reo_arrf_t */
             if (e->kind == EXPR_ARRAY && e->array.count > 0) {
                 char et[128];
                 if (infer_expr_c_type(e->array.elems[0], et, sizeof(et)) &&
                     (strcmp(et, "float") == 0 || strcmp(et, "double") == 0))
-                    { known = "double*"; break; }
+                    { known = "__reo_arrf_t"; break; }
             } else if (e->kind == EXPR_ARRAY_REPEAT && e->array_repeat.value) {
                 char et[128];
                 if (infer_expr_c_type(e->array_repeat.value, et, sizeof(et)) &&
                     (strcmp(et, "float") == 0 || strcmp(et, "double") == 0))
-                    { known = "double*"; break; }
+                    { known = "__reo_arrf_t"; break; }
             }
-            known = "int64_t*";
+            known = "__reo_arr_t";
             break;
         }
         case EXPR_INDEX: {
             /* element access: follow the collection's element type */
             char base[128];
-            if (infer_expr_c_type(e->index.target, base, sizeof(base)) &&
-                strcmp(base, "double*") == 0)
-                known = "double";
-            else
-                known = "int64_t";
+            if (infer_expr_c_type(e->index.target, base, sizeof(base))) {
+                if (strcmp(base, "__reo_arrf_t") == 0) { known = "double"; break; }
+                if (strcmp(base, "__reo_arr_t") == 0) { known = "int64_t"; break; }
+            }
+            known = "int64_t";
             break;
         }
         case EXPR_CAST:
@@ -1071,6 +1078,17 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 /* string builtins */
                 if (strcmp(fn, "str_len") == 0)    { re0_buffer_write_str(b, "__reo_str_len((char*)"); goto gen1; }
                 if (strcmp(fn, "str_to_int") == 0) { re0_buffer_write_str(b, "__reo_str_to_int((char*)"); goto gen1; }
+                /* array length: works for both fat-pointer array kinds */
+                if (strcmp(fn, "len") == 0 && e->call.arg_count == 1) {
+                    char at[128];
+                    if (infer_expr_c_type(e->call.args[0], at, sizeof(at)) &&
+                        (strcmp(at, "__reo_arr_t") == 0 || strcmp(at, "__reo_arrf_t") == 0)) {
+                        re0_buffer_write_str(b, "(&( ");
+                        c_gen_expr(c, e->call.args[0]);
+                        re0_buffer_write_str(b, "))->len");
+                        break;
+                    }
+                }
                 if (strcmp(fn, "str_char_at") == 0){
                     re0_buffer_write_str(b, "__reo_str_char_at((char*)");
                     if (e->call.arg_count > 0) c_gen_expr(c, e->call.args[0]); else re0_buffer_write_str(b, "\"\"");
@@ -1360,32 +1378,23 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
         }
         case EXPR_ARRAY: {
             if (e->array.count == 0) {
-                re0_buffer_write_str(b, "__reo_array_repeat(0, 0)");
+                re0_buffer_write_str(b, "__reo_arr_rep(0, 0)");
                 break;
             }
-            /* element-wise type: any float element makes a double[] array
-             * (previously all arrays were int64[] and truncated floats) */
+            /* element-wise type: any float element makes a double array */
             bool is_float = false;
             for (int i = 0; i < e->array.count && !is_float; i++) {
                 char et[128];
                 if (infer_expr_c_type(e->array.elems[i], et, sizeof(et)))
                     is_float = strcmp(et, "float") == 0 || strcmp(et, "double") == 0;
             }
-            if (is_float) {
-                re0_buffer_write_str(b, "__reo_array_dup_f64((const double[]){");
-                for (int i = 0; i < e->array.count; i++) {
-                    if (i > 0) re0_buffer_write_str(b, ", ");
-                    c_gen_expr(c, e->array.elems[i]);
-                }
-                re0_buffer_write_fmt(b, "}, %d)", e->array.count);
-            } else {
-                re0_buffer_write_str(b, "__reo_array_dup((const int64_t[]){");
-                for (int i = 0; i < e->array.count; i++) {
-                    if (i > 0) re0_buffer_write_str(b, ", ");
-                    c_gen_expr(c, e->array.elems[i]);
-                }
-                re0_buffer_write_fmt(b, "}, %d)", e->array.count);
+            const char *dup = is_float ? "__reo_arrf_lit((const double[]){" : "__reo_arr_lit((const int64_t[]){";
+            re0_buffer_write_str(b, dup);
+            for (int i = 0; i < e->array.count; i++) {
+                if (i > 0) re0_buffer_write_str(b, ", ");
+                c_gen_expr(c, e->array.elems[i]);
             }
+            re0_buffer_write_fmt(b, "}, %d)", e->array.count);
             break;
         }
         case EXPR_ARRAY_REPEAT: {
@@ -1393,29 +1402,35 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             char et[128];
             bool rep_float = infer_expr_c_type(e->array_repeat.value, et, sizeof(et)) &&
                              (strcmp(et, "float") == 0 || strcmp(et, "double") == 0);
-            if (rep_float) {
-                re0_buffer_write_str(b, "__reo_array_repeat_f64((int64_t)(");
-                if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
-                else re0_buffer_write_str(b, "0");
-                re0_buffer_write_str(b, "), ");
-                c_gen_expr(c, e->array_repeat.value);
-                re0_buffer_write_char(b, ')');
-            } else {
-                re0_buffer_write_str(b, "__reo_array_repeat((int64_t)(");
-                if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
-                else re0_buffer_write_str(b, "0");
-                re0_buffer_write_str(b, "), ");
-                c_gen_expr(c, e->array_repeat.value);
-                re0_buffer_write_char(b, ')');
-            }
+            const char *fn = rep_float ? "__reo_arrf_rep" : "__reo_arr_rep";
+            re0_buffer_write_fmt(b, "%s((int64_t)(", fn);
+            if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
+            else re0_buffer_write_str(b, "0");
+            re0_buffer_write_str(b, "), ");
+            c_gen_expr(c, e->array_repeat.value);
+            re0_buffer_write_char(b, ')');
             break;
         }
         case EXPR_INDEX: {
-            re0_buffer_write_char(b, '(');
-            c_gen_expr(c, e->index.target);
-            re0_buffer_write_char(b, '[');
-            c_gen_expr(c, e->index.index);
-            re0_buffer_write_str(b, "])");
+            /* fat-pointer arrays: checked access via helper. Detect the
+             * element type so double arrays read as double. */
+            char base[128];
+            bool base_known = infer_expr_c_type(e->index.target, base, sizeof(base));
+            bool dbl = base_known && strcmp(base, "__reo_arrf_t") == 0;
+            if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl)) {
+                re0_buffer_write_fmt(b, "%s(&(", dbl ? "__reo_arrf_get" : "__reo_arr_get");
+                c_gen_expr(c, e->index.target);
+                re0_buffer_write_str(b, "), (int64_t)(");
+                c_gen_expr(c, e->index.index);
+                re0_buffer_write_str(b, "))");
+            } else {
+                /* non-array base (str, vec, inline struct arrays): raw C index */
+                re0_buffer_write_char(b, '(');
+                c_gen_expr(c, e->index.target);
+                re0_buffer_write_char(b, '[');
+                c_gen_expr(c, e->index.index);
+                re0_buffer_write_str(b, "])");
+            }
             break;
         }
         case EXPR_CAST: {
@@ -1596,6 +1611,31 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             break;
         case STMT_INDEX_ASSIGN:
             re0_buffer_write_indent(b, depth);
+            /* array element assignment: bounds-checked via fat pointer */
+            {
+                char base[128];
+                bool base_known = infer_expr_c_type(s->index_assign.target, base, sizeof(base));
+                bool dbl = base_known && strcmp(base, "__reo_arrf_t") == 0;
+                if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl)) {
+                    re0_buffer_write_fmt(b, "%s(&(", dbl ? "__reo_arrf_set" : "__reo_arr_set");
+                    c_gen_expr(c, s->index_assign.target);
+                    re0_buffer_write_str(b, "), (int64_t)(");
+                    c_gen_expr(c, s->index_assign.index);
+                    re0_buffer_write_str(b, "), ");
+                    if (s->index_assign.op == BINOP_ASSIGN_SENTINEL) {
+                        c_gen_expr(c, s->index_assign.value);
+                    } else if (s->index_assign.op == BINOP_ADD) {                        /* compound += : read, add, write */
+                        re0_buffer_write_fmt(b, "%s(&(", dbl ? "__reo_arrf_get" : "__reo_arr_get");
+                        c_gen_expr(c, s->index_assign.target);
+                        re0_buffer_write_str(b, "), (int64_t)(");
+                        c_gen_expr(c, s->index_assign.index);
+                        re0_buffer_write_str(b, ")) + ");
+                        c_gen_expr(c, s->index_assign.value);
+                    }
+                    re0_buffer_write_str(b, ");\n");
+                    break;
+                }
+            }
             c_gen_expr(c, s->index_assign.target);
             re0_buffer_write_char(b, '[');
             c_gen_expr(c, s->index_assign.index);
@@ -1687,6 +1727,20 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 re0_buffer_write_fmt(b, "int64_t %s = __v%d->data[__i%d];\n",
                                      s->for_stmt.var, t, t);
             }
+            /* fat-pointer array iteration: for x in [..] / arr */
+            else if (iter && (iter->kind == EXPR_ARRAY || iter->kind == EXPR_ARRAY_REPEAT ||
+                              (iter->kind == EXPR_IDENT && expr_is_array_var(iter)))) {
+                int t = c->temp_counter++;
+                char at[128];
+                bool dbl = infer_expr_c_type(iter, at, sizeof(at)) &&
+                           strcmp(at, "__reo_arrf_t") == 0;
+                re0_buffer_write_fmt(b, "{ %s __a%d = ", dbl ? "__reo_arrf_t" : "__reo_arr_t", t);
+                c_gen_expr(c, iter);
+                re0_buffer_write_fmt(b, "; for (int64_t __i%d = 0; __i%d < __a%d.len; __i%d++) {\n",
+                                     t, t, t, t);
+                re0_buffer_write_fmt(b, "%s %s = __a%d.data[__i%d];\n",
+                                     dbl ? "double" : "int64_t", s->for_stmt.var, t, t);
+            }
             /* numeric iteration: for i in count */
             else {
                 re0_buffer_write_fmt(b, "for (int64_t %s = 0; %s < (int64_t)(",
@@ -1697,9 +1751,10 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             c_gen_body(c, s->for_stmt.body, s->for_stmt.body_count, depth + 1);
             re0_buffer_write_indent(b, depth);
             re0_buffer_write_str(b, "}\n");
-            /* string/Vec iteration needs an extra closing brace for the outer block */
+            /* string/Vec/array iteration needs an extra closing brace for the outer block */
             if (iter && iter->kind != EXPR_BINARY &&
-                (expr_is_string(iter) || expr_is_vec(iter)))
+                (expr_is_string(iter) || expr_is_vec(iter) || expr_is_array_var(iter) ||
+                 iter->kind == EXPR_ARRAY || iter->kind == EXPR_ARRAY_REPEAT))
                 re0_buffer_write_str(b, "}\n");
             break;
         }
@@ -2096,6 +2151,64 @@ static void c_begin(Re0Codegen *c) {
         "    for (int64_t i = 0; i < n; i++) a[i] = val;\n"
         "    return a;\n"
         "}\n"
+        /* fat-pointer arrays (literals / repeat): {data, len} with bounds
+         * checking on every element access — replaces bare pointers that
+         * silently read/write out of bounds */
+        "typedef struct { int64_t* data; int64_t len; } __reo_arr_t;\n"
+        "typedef struct { double* data; int64_t len; } __reo_arrf_t;\n"
+        "static int64_t __reo_chk_idx(int64_t i, int64_t len, const char* what) {\n"
+        "    if (i < 0 || i >= len) {\n"
+        "        fprintf(stderr, \"runtime error: array index %lld out of bounds (len %lld) in %s\\n\",\n"
+        "                (long long)i, (long long)len, what);\n"
+        "        abort();\n"
+        "    }\n"
+        "    return i;\n"
+        "}\n"
+        "static __reo_arr_t __reo_arr_lit(const int64_t* src, int64_t n) {\n"
+        "    __reo_arr_t a;\n"
+        "    a.len = n < 0 ? 0 : n;\n"
+        "    a.data = (int64_t*)malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));\n"
+        "    if (!a.data) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
+        "    if (n > 0) memcpy(a.data, src, sizeof(int64_t) * (size_t)n);\n"
+        "    return a;\n"
+        "}\n"
+        "static __reo_arr_t __reo_arr_rep(int64_t n, int64_t val) {\n"
+        "    __reo_arr_t a;\n"
+        "    a.len = n < 0 ? 0 : n;\n"
+        "    a.data = (int64_t*)malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));\n"
+        "    if (!a.data) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
+        "    for (int64_t i = 0; i < a.len; i++) a.data[i] = val;\n"
+        "    return a;\n"
+        "}\n"
+        "static __reo_arrf_t __reo_arrf_lit(const double* src, int64_t n) {\n"
+        "    __reo_arrf_t a;\n"
+        "    a.len = n < 0 ? 0 : n;\n"
+        "    a.data = (double*)malloc(sizeof(double) * (size_t)(n > 0 ? n : 1));\n"
+        "    if (!a.data) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
+        "    if (n > 0) memcpy(a.data, src, sizeof(double) * (size_t)n);\n"
+        "    return a;\n"
+        "}\n"
+        "static __reo_arrf_t __reo_arrf_rep(int64_t n, double val) {\n"
+        "    __reo_arrf_t a;\n"
+        "    a.len = n < 0 ? 0 : n;\n"
+        "    a.data = (double*)malloc(sizeof(double) * (size_t)(n > 0 ? n : 1));\n"
+        "    if (!a.data) { fprintf(stderr, \"runtime error: out of memory\\n\"); abort(); }\n"
+        "    for (int64_t i = 0; i < a.len; i++) a.data[i] = val;\n"
+        "    return a;\n"
+        "}\n"
+        "static int64_t __reo_arr_get(__reo_arr_t* a, int64_t i) {\n"
+        "    return a->data[__reo_chk_idx(i, a->len, \"array read\")];\n"
+        "}\n"
+        "static void __reo_arr_set(__reo_arr_t* a, int64_t i, int64_t v) {\n"
+        "    a->data[__reo_chk_idx(i, a->len, \"array write\")] = v;\n"
+        "}\n"
+        "static double __reo_arrf_get(__reo_arrf_t* a, int64_t i) {\n"
+        "    return a->data[__reo_chk_idx(i, a->len, \"array read\")];\n"
+        "}\n"
+        "static void __reo_arrf_set(__reo_arrf_t* a, int64_t i, double v) {\n"
+        "    a->data[__reo_chk_idx(i, a->len, \"array write\")] = v;\n"
+        "}\n"
+        "static int64_t __reo_arr_len(const void* a, int64_t len) { (void)a; return len; }\n"
         /* svec helpers: string vector { char** data; len; cap }, elements are strdup'd strings */
         "typedef struct { char** data; int64_t len; int64_t cap; } __reo_svec_t;\n"
         "static __reo_svec_t* __reo_svec_new(void) {\n"

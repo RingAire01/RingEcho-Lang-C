@@ -1,0 +1,6 @@
+/* out-of-bounds array access must abort with a clear runtime error,
+ * never read/write garbage memory (expected runtime failure) */
+fn main() {
+    let a = [1, 2, 3];
+    println(a[5]);
+}
