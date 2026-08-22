@@ -1,0 +1,53 @@
+/* full cast matrix regressions:
+ * numeric<->numeric, bool/char<->int, str<->num, saturating float->int,
+ * and rejected illegal casts (see tests/invalid_cast.reo)
+ */
+fn main() {
+    /* int <-> int (wrapping narrowing, safe_narrow path) */
+    let n300 = 300;
+    let u8v = n300 as u8;
+    println(u8v);          /* 44 */
+    let neg1 = -1;
+    let u8n = neg1 as u8;
+    println(u8n);          /* 255 */
+    let u200 = 200 as u8;
+    let i8v = u200 as i8;
+    println(i8v);          /* -56 */
+
+    /* int <-> float */
+    let f = 3.5;
+    let i = f as i64;
+    println(i);            /* 3 */
+    let back = i as f64;
+    println(back);         /* 3 */
+
+    /* float -> narrow: Rust-style saturation */
+    let over = 200.5;
+    println(over as i8);   /* 127 */
+    let under = -200.5;
+    println(under as i8);  /* -128 */
+    let negf = -3.5;
+    println(negf as u8);   /* 0 */
+    let overu = 300.5;
+    println(overu as u8);  /* 255 */
+
+    /* char/bool <-> int */
+    let c = 'A';
+    let code = c as i64;
+    println(code);         /* 65 */
+    let back2 = 66 as char;
+    println(back2 as i64); /* 66 */
+    let flag = true;
+    println(flag as i64);  /* 1 */
+
+    /* str <-> numeric */
+    let s = "42";
+    let parsed = s as i64;
+    println(parsed);       /* 42 */
+    let s2 = "3.5";
+    let pf = s2 as f64;
+    println(pf as i64);    /* 3 */
+    let n42 = 42;
+    let text = n42 as str;
+    println(text);         /* 42 */
+}

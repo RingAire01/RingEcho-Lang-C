@@ -506,11 +506,34 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
             return re0_type_make_func(params, pc, ret, false, NULL);
         }
         case EXPR_CAST: {
-            /* Cast expression: infer target type and validate cast legality */
-            if (e->cast.inner) infer_type(s, e->cast.inner);
+            /* Cast expression: infer target type and validate cast legality.
+             * Legal: numeric <-> numeric (all widths), bool <-> integer,
+             * char <-> integer, str -> numeric (parse), numeric -> str
+             * (format). Everything else (e.g. float -> str, str -> bool)
+             * is rejected here instead of silently emitting broken C. */
+            Re0Type *src = e->cast.inner ? infer_type(s, e->cast.inner) : NULL;
             if (e->cast.target_type) {
                 Re0Type *target = re0_type_parse(e->cast.target_type);
-                if (target) return target;
+                if (!target) return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+
+                Re0TypeKind sk = src ? src->kind : RE0_TYPE_UNKNOWN;
+                Re0TypeKind dk = target->kind;
+                bool s_num = re0_type_is_numeric(sk);
+                bool d_num = re0_type_is_numeric(dk);
+                bool s_int_like = s_num || sk == RE0_TYPE_BOOL || sk == RE0_TYPE_CHAR;
+                bool d_int_like = d_num || dk == RE0_TYPE_BOOL || dk == RE0_TYPE_CHAR;
+
+                bool legal = (s_num && d_num)                        /* numeric <-> numeric */
+                          || (s_int_like && d_int_like)              /* bool/char <-> integer */
+                          || (sk == RE0_TYPE_STR && d_num)           /* str -> numeric */
+                          || (s_num && dk == RE0_TYPE_STR);          /* numeric -> str */
+                if (src && !legal) {
+                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                     "invalid cast from '%s' to '%s'",
+                                     re0_type_kind_name(sk), re0_type_kind_name(dk));
+                    s->had_error = true;
+                }
+                return target;
             }
             return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
         }

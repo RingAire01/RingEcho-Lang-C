@@ -1369,24 +1369,48 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             /* Determine source type for safe cast selection */
             char src_type[128] = {0};
             bool src_known = infer_expr_c_type(e->cast.inner, src_type, sizeof(src_type));
+            bool src_is_str = src_known && strcmp(src_type, "const char*") == 0;
             bool src_is_float = src_known && (strcmp(src_type, "float") == 0 ||
                                                strcmp(src_type, "double") == 0);
-            bool dst_is_int = target && (target[0] == 'i' || target[0] == 'u' ||
-                              strcmp(target, "bool") == 0 || strcmp(target, "char") == 0);
+            bool src_is_bool = src_known && strcmp(src_type, "bool") == 0;
+            bool dst_is_str = target && strcmp(target, "str") == 0;
             bool dst_is_float = target && (strcmp(target, "f32") == 0 ||
                                             strcmp(target, "f64") == 0);
-            if (src_is_float && dst_is_int) {
-                /* float→int: NaN/Inf-safe conversion */
+            bool dst_is_int = target && (target[0] == 'i' || target[0] == 'u' ||
+                              strcmp(target, "bool") == 0 || strcmp(target, "char") == 0);
+
+            if (src_is_str && dst_is_float) {
+                /* str -> float: parse */
+                re0_buffer_write_str(b, "__reo_str_to_f64(");
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_str(b, ")");
+            } else if (src_is_str && dst_is_int) {
+                /* str -> int: parse */
+                re0_buffer_write_fmt(b, "(%s)__reo_str_to_int(", c_type);
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_str(b, ")");
+            } else if (src_is_float && dst_is_str) {
+                /* float -> str: format */
+                re0_buffer_write_str(b, "__reo_f64_to_str(");
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_str(b, ")");
+            } else if (!src_is_str && !src_is_float && dst_is_str) {
+                /* int/bool/char -> str: format via to_string */
+                re0_buffer_write_str(b, "__reo_to_string((int64_t)(");
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_str(b, "))");
+            } else if (src_is_float && dst_is_int) {
+                /* float->int: NaN/Inf-safe conversion */
                 re0_buffer_write_fmt(b, "__reo_safe_f2i(");
                 c_gen_expr(c, e->cast.inner);
                 re0_buffer_write_fmt(b, ", \"%s\")", c_type);
-            } else if (src_known && !src_is_float && dst_is_float) {
-                /* int→float: direct cast is safe */
+            } else if (src_known && !src_is_float && !src_is_str && dst_is_float) {
+                /* int->float: direct cast is safe */
                 re0_buffer_write_fmt(b, "((%s)(", c_type);
                 c_gen_expr(c, e->cast.inner);
                 re0_buffer_write_str(b, "))");
-            } else if (src_known && !src_is_float && dst_is_int) {
-                /* int→int: narrowing-safe conversion */
+            } else if (src_known && !src_is_float && !src_is_str && dst_is_int) {
+                /* int->int: narrowing-safe conversion */
                 size_t dst_sz = 0;
                 if (target) {
                     Re0Type *dt = re0_type_parse(target);
@@ -1406,6 +1430,11 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                     c_gen_expr(c, e->cast.inner);
                     re0_buffer_write_str(b, "))");
                 }
+            } else if (src_is_bool && dst_is_float) {
+                /* bool -> float: 0.0/1.0 */
+                re0_buffer_write_fmt(b, "((%s)(", c_type);
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_str(b, ") ? 1.0 : 0.0)");
             } else {
                 /* fallback: direct C cast */
                 re0_buffer_write_fmt(b, "((%s)(", c_type);
@@ -1833,7 +1862,38 @@ static void c_begin(Re0Codegen *c) {
         "    return (int64_t)u;\n"
         "}\n"
         "static int64_t __reo_safe_f2i(double v, const char* ty) {\n"
-        "    if (v != v || v == (double)(1.0/0.0) || v == (double)(-1.0/0.0)) return 0;\n"
+        "    if (v != v) return 0;\n"
+        "    if (ty && (strncmp(ty, \"uint\", 4) == 0 || strncmp(ty, \"int\", 3) == 0)) {\n"
+        "        /* narrow integer target (intN_t / uintN_t, N < 64):\n"
+        "         * saturate to the target range like Rust `as` (no wrap).\n"
+        "         * digits start at index 4 for uintN_t, 3 for intN_t. */\n"
+        "        const char* d = ty + (ty[0] == 'u' ? 4 : 3);\n"
+        "        int bits;\n"
+        "        if (d[0] == '8') bits = 8;\n"
+        "        else if (d[0] == '1' && d[1] == '6') bits = 16;\n"
+        "        else if (d[0] == '3' && d[1] == '2') bits = 32;\n"
+        "        else bits = 64;\n"
+        "        if (bits < 64) {\n"
+        "            if (ty[0] == 'u') {\n"
+        "                double max = (double)(((((uint64_t)1) << (bits - 1)) - 1) * 2 + 1);\n"
+        "                if (v == (double)(1.0/0.0)) return (int64_t)(uint64_t)max;\n"
+        "                if (v == (double)(-1.0/0.0) || v < 0.0) return 0;\n"
+        "                if (v > max) return (int64_t)(uint64_t)max;\n"
+        "                return (int64_t)(uint64_t)v;\n"
+        "            } else {\n"
+        "                double max = (double)(((int64_t)1) << (bits - 1)) - 1.0;\n"
+        "                double min = -max - 1.0;\n"
+        "                if (v == (double)(1.0/0.0)) return (int64_t)max;\n"
+        "                if (v == (double)(-1.0/0.0)) return (int64_t)min;\n"
+        "                if (v > max) return (int64_t)max;\n"
+        "                if (v < min) return (int64_t)min;\n"
+        "                return (int64_t)v;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    if (ty && strcmp(ty, \"bool\") == 0) return v != 0.0;\n"
+        "    if (v == (double)(1.0/0.0)) return 9223372036854775807LL;\n"
+        "    if (v == (double)(-1.0/0.0)) return (-9223372036854775807LL - 1);\n"
         "    if (v > (double)9223372036854775807LL) return 9223372036854775807LL;\n"
         "    if (v < (double)(-9223372036854775807LL - 1)) return (-9223372036854775807LL - 1);\n"
         "    return (int64_t)v;\n"
@@ -1863,6 +1923,14 @@ static void c_begin(Re0Codegen *c) {
         "}\n"
         "static int64_t __reo_str_to_int(const char* s) {\n"
         "    return s ? strtoll(s, NULL, 10) : 0;\n"
+        "}\n"
+        "static double __reo_str_to_f64(const char* s) {\n"
+        "    return s ? strtod(s, NULL) : 0.0;\n"
+        "}\n"
+        "static const char* __reo_f64_to_str(double v) {\n"
+        "    char* r = (char*)malloc(64);\n"
+        "    snprintf(r, 64, \"%g\", v);\n"
+        "    return r;\n"
         "}\n"
         "static const char* __reo_str_slice(const char* s, int64_t start, int64_t end) {\n"
         "    if (!s) return \"\";\n"
