@@ -153,8 +153,29 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                 case BINOP_RANGE:
                     return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
                 default:
-                    /* arithmetic/bitwise: return left operand type (fall
-                     * back to right if left is unknown), stay lenient */
+                    /* arithmetic/bitwise: numeric promotion.
+                     * int + float must promote to float (C semantics),
+                     * otherwise `let c = 7 + 2.0` infers int64 and
+                     * truncates the result. Untyped integer literals
+                     * inherit the other side's type (Rust-style), so
+                     * `i8 a + 1` stays i8. */
+                    {
+                        bool l_lit = e->binary.left && e->binary.left->kind == EXPR_INT;
+                        bool r_lit = e->binary.right && e->binary.right->kind == EXPR_INT;
+                        if (l_lit && r_lit) return re0_type_make(RE0_TYPE_I64, NULL);
+                        if (l_lit && rt) return rt;
+                        if (r_lit && lt) return lt;
+                    }
+                    if (lt && rt &&
+                        re0_type_is_numeric(lt->kind) &&
+                        re0_type_is_numeric(rt->kind)) {
+                        if (re0_type_is_float(lt->kind)) return lt;
+                        if (re0_type_is_float(rt->kind)) return rt;
+                        /* both integer: prefer the wider of the two */
+                        if (re0_type_sizeof(lt->kind) >= re0_type_sizeof(rt->kind))
+                            return lt;
+                        return rt;
+                    }
                     if (lt && lt->kind != RE0_TYPE_UNKNOWN) return lt;
                     if (rt) return rt;
                     return re0_type_make(RE0_TYPE_UNKNOWN, NULL);

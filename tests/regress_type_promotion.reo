@@ -1,0 +1,35 @@
+/* numeric promotion regressions:
+ * - int + float must infer float (was truncated to int64)
+ * - i8 arithmetic with literals must stay i8 (literal inherits type)
+ * - narrowing casts must wrap correctly
+ */
+fn main() {
+    /* int + float promotes to float */
+    let a = 7;
+    let b = 2.0;
+    let c = a + b;
+    println(c);          /* 9 (printed via %g) */
+    let d = 2.5 * 2;     /* float * int-literal -> float */
+    println(d);          /* 5 */
+
+    /* i8 literal inheritance: 127 + 1 wraps to -128 */
+    let n8: i8 = 127;
+    let wrapped = n8 + 1;
+    println(wrapped);    /* -128 */
+
+    /* narrowing cast wraps */
+    let big = 300 as u8;
+    println(big);        /* 44 */
+    let neg = -5 as u8;
+    println(neg);        /* 251 */
+
+    /* chained cast round-trips */
+    let rt = 255 as u8 as i64;
+    println(rt);         /* 255 */
+
+    /* mixed int widths keep the wider type */
+    let w: i32 = 100;
+    let wide: i64 = 5;
+    let sum = wide + w;
+    println(sum);        /* 105 */
+}

@@ -599,6 +599,30 @@ static bool expr_is_i128(Re0Expr *e) {
     return t && strcmp(t, "__int128") == 0;
 }
 
+/* pick the wider of two integer C type names for mixed-width arithmetic
+ * (mirrors sema numeric promotion). returns NULL when neither is a known
+ * integer type. */
+static const char *c_wider_int_type(const char *a, const char *b) {
+    static const char *order[] = {
+        "int8_t", "uint8_t", "int16_t", "uint16_t",
+        "int32_t", "uint32_t", "int64_t", "uint64_t",
+        "__int128", "unsigned __int128"
+    };
+    const int n = (int)(sizeof(order) / sizeof(order[0]));
+    int ia = -1, ib = -1;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(a, order[i]) == 0) ia = i;
+        if (strcmp(b, order[i]) == 0) ib = i;
+    }
+    if (ia < 0 || ib < 0) return NULL;
+    /* widen to the larger rank; on equal rank prefer unsigned */
+    if (ia == ib) return order[ia];
+    int rank_a = ia / 2, rank_b = ib / 2;
+    if (rank_a > rank_b) return order[ia];
+    if (rank_b > rank_a) return order[ib];
+    return (ia > ib) ? order[ia] : order[ib];
+}
+
 static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
     if (!e || !type || type_size == 0) return false;
     const char *known = NULL;
@@ -687,10 +711,41 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             break;
         }
         case EXPR_BINARY: {
-            /* string concatenation yields const char*; other binary types follow operands or default */
+            /* string concatenation yields const char*; numeric arithmetic
+             * must mirror sema promotion (int + float -> double), otherwise
+             * `let c = 7 + 2.0` declares int64_t and truncates the result. */
             if (e->binary.op == BINOP_ADD &&
-                (expr_is_string(e->binary.left) || expr_is_string(e->binary.right)))
+                (expr_is_string(e->binary.left) || expr_is_string(e->binary.right))) {
                 known = "const char*";
+                break;
+            }
+            if (e->binary.op != BINOP_ADD && e->binary.op != BINOP_SUB &&
+                e->binary.op != BINOP_MUL && e->binary.op != BINOP_DIV &&
+                e->binary.op != BINOP_MOD)
+                break; /* comparisons/logic yield bool via caller default */
+            char lt[128], rt[128];
+            bool has_l = infer_expr_c_type(e->binary.left, lt, sizeof(lt));
+            bool has_r = infer_expr_c_type(e->binary.right, rt, sizeof(rt));
+            /* untyped integer literals inherit the other side's type
+             * (Rust-style literal flexibility): `i8 a + 1` stays i8.
+             * infer_expr_c_type types literals as int64_t, so detect
+             * them structurally here. */
+            bool l_lit = e->binary.left && e->binary.left->kind == EXPR_INT;
+            bool r_lit = e->binary.right && e->binary.right->kind == EXPR_INT;
+            if (l_lit && r_lit) { known = "int64_t"; break; }
+            if (l_lit && has_r) { known = rt; break; }
+            if (r_lit && has_l) { known = lt; break; }
+            if (has_l && has_r) {
+                bool lf = strcmp(lt, "double") == 0 || strcmp(lt, "float") == 0;
+                bool rf = strcmp(rt, "double") == 0 || strcmp(rt, "float") == 0;
+                if (lf || rf) { known = "double"; break; }
+                /* both integer: keep the wider type */
+                known = c_wider_int_type(lt, rt);
+                if (known) break;
+                known = lt; /* fallback: left operand type */
+            } else if (has_l) {
+                known = lt;
+            }
             break;
         }
         default: break;
