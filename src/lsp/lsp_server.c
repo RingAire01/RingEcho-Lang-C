@@ -1,18 +1,18 @@
 #include "base/safe.h"
 /*
- * lsp_server.c — RingEcho LSP 服务器
+ * lsp_server.c — RingEcho LSP server
  *
- * 协议：JSON-RPC 2.0 over stdin/stdout (Content-Length framing)
+ * Protocol: JSON-RPC 2.0 over stdin/stdout (Content-Length framing)
  *
- * 支持的方法：
- *   - initialize: 返回服务器能力
- *   - shutdown: 准备关闭
- *   - textDocument/didOpen: 接收文件内容 → 诊断
- *   - textDocument/didChange: 接收变更 → 诊断
- *   - textDocument/hover: 返回类型信息
+ * Supported methods:
+ *   - initialize: return server capabilities
+ *   - shutdown: prepare to shut down
+ *   - textDocument/didOpen: receive file content → diagnostics
+ *   - textDocument/didChange: receive changes → diagnostics
+ *   - textDocument/hover: return type information
  *
- * 发送的通知：
- *   - textDocument/publishDiagnostics: 推送错误/警告
+ * Notifications sent:
+ *   - textDocument/publishDiagnostics: push errors/warnings
  */
 
 #include "lsp/lsp_json.h"
@@ -32,7 +32,7 @@
 #include <io.h>
 #endif
 
-/* ── 工具：JSON 转义 ── */
+/* ── utility: JSON escaping ── */
 static void json_escape(FILE *f, const char *s) {
     fputc('"', f);
     while (*s) {
@@ -53,14 +53,14 @@ static void json_escape(FILE *f, const char *s) {
     fputc('"', f);
 }
 
-/* ── 发送 JSON-RPC 消息 ── */
+/* ── send a JSON-RPC message ── */
 static void lsp_send(const char *json) {
     size_t len = strlen(json);
     fprintf(stdout, "Content-Length: %zu\r\n\r\n%s", len, json);
     fflush(stdout);
 }
 
-/* ── 发送响应（有 id 的请求） ── */
+/* ── send a response (request with id) ── */
 static void lsp_send_response(int id, const char *result_json) {
     size_t need = strlen(result_json) + 128;
     char *buf = (char*)malloc(need);
@@ -71,7 +71,7 @@ static void lsp_send_response(int id, const char *result_json) {
     free(buf);
 }
 
-/* ── 发送诊断通知 ── */
+/* ── send diagnostics notification ── */
 static void lsp_send_diagnostics(const char *uri, Re0ErrorList *errors) {
     FILE *f = tmpfile();
     if (!f) return;
@@ -85,7 +85,7 @@ static void lsp_send_diagnostics(const char *uri, Re0ErrorList *errors) {
     if (errors) {
         for (size_t i = 0; i < Re0ErrorVec_len(&errors->errors); i++) {
             Re0Error *e = &errors->errors.data[i];
-            if (e->level == RE0_WARN) continue; /* 只报 error，不报 warning */
+            if (e->level == RE0_WARN) continue; /* report errors only, not warnings */
             if (!first) fputc(',', f);
             first = false;
             fprintf(f, "{\"range\":{\"start\":{\"line\":%zu,\"character\":%zu},"
@@ -115,7 +115,7 @@ static void lsp_send_diagnostics(const char *uri, Re0ErrorList *errors) {
     free(buf);
 }
 
-/* ── 编译并获取诊断 ── */
+/* ── compile and collect diagnostics ── */
 static void run_diagnostics(const char *uri, const char *source) {
     Re0Compiler comp;
     re0_compiler_init(&comp, &re0_backend_c);
@@ -134,20 +134,20 @@ static void run_diagnostics(const char *uri, const char *source) {
     bool ok = re0_lexer_tokenize(&comp.lexer, source, uri);
     if (ok) ok = re0_parser_parse(&comp.parser, &comp.lexer.stream);
     if (ok) re0_sema_check(&comp.sema, &comp.parser.stmts);
-    /* lint 不运行（LSP 不需要 style 检查） */
+    /* lint is not run (LSP does not need style checks) */
 
     lsp_send_diagnostics(uri, &comp.errors);
     re0_compiler_destroy(&comp);
 }
 
-/* ── 从 params 提取文本内容 ── */
+/* ── extract text content from params ── */
 static const char *extract_text(JVal *params) {
     JVal *td = json_get(params, "textDocument");
     if (!td) return NULL;
     return json_str(json_get(td, "text"), NULL);
 }
 
-/* ── 从 params 提取 URI ── */
+/* ── extract URI from params ── */
 static const char *extract_uri(JVal *params) {
     JVal *td = json_get(params, "textDocument");
     if (!td) return NULL;
@@ -166,17 +166,17 @@ static bool header_matches(const char *header, const char *name) {
     return true;
 }
 
-/* ── 读取一条 JSON-RPC 消息 ── */
+/* ── read one JSON-RPC message ── */
 static char *read_message(size_t *out_len) {
-    /* 读取 Content-Length 头 */
+    /* read Content-Length header */
     size_t content_len = 0;
     char header[256];
     while (fgets(header, sizeof(header), stdin)) {
-        /* 去除 \r\n */
+        /* strip \r\n */
         size_t hlen = strlen(header);
         while (hlen > 0 && (header[hlen-1] == '\r' || header[hlen-1] == '\n'))
             header[--hlen] = '\0';
-        if (hlen == 0) break; /* 空行 = 头结束 */
+        if (hlen == 0) break; /* empty line = end of headers */
         if (header_matches(header, "Content-Length:")) {
             long cl = atol(header + 15);
             if (cl <= 0 || cl > (long)RE0_MAX_LSP_MESSAGE) {
@@ -207,7 +207,7 @@ static char *read_message(size_t *out_len) {
     return body;
 }
 
-/* ── LSP 主循环 ── */
+/* ── LSP main loop ── */
 int lsp_server_run(void) {
 #if defined(RE0_PLATFORM_WINDOWS)
     /* Text-mode stdin/stdout translate \r\n ↔ \n and treat 0x1A as EOF,
@@ -242,7 +242,7 @@ int lsp_server_run(void) {
                 "\"serverInfo\":{\"name\":\"reoc-lsp\",\"version\":\"0.2.0\"}"
                 "}");
         } else if (strcmp(method, "initialized") == 0) {
-            /* notification: 客户端确认初始化，无需响应 */
+            /* notification: client acknowledges initialization, no response needed */
         } else if (strcmp(method, "shutdown") == 0) {
             shutdown_req = true;
             lsp_send_response(id, "null");
@@ -256,7 +256,7 @@ int lsp_server_run(void) {
             if (uri && text) run_diagnostics(uri, text);
         } else if (strcmp(method, "textDocument/didChange") == 0) {
             const char *uri = extract_uri(params);
-            /* didChange 的 text 在 changes[0].text 中 */
+            /* didChange text lives in changes[0].text */
             JVal *changes = json_get(params, "contentChanges");
             if (changes && changes->type == J_ARR && changes->arr.count > 0) {
                 const char *text = json_str(
@@ -264,10 +264,10 @@ int lsp_server_run(void) {
                 if (uri && text) run_diagnostics(uri, text);
             }
         } else if (strcmp(method, "textDocument/hover") == 0) {
-            /* MVP: 返回空 hover */
+            /* MVP: return empty hover */
             lsp_send_response(id, "null");
         } else if (id >= 0) {
-            /* 未知请求，返回 method not found */
+            /* unknown request, return method not found */
             char buf[256];
             snprintf(buf, sizeof(buf),
                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":"

@@ -1,13 +1,13 @@
 #include "base/safe.h"
 /*
- * lsp_json.c — 精简 JSON 解析器实现
+ * lsp_json.c — minimal JSON parser implementation
  */
 #include "lsp/lsp_json.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-/* ── 解析器状态 ── */
+/* ── parser state ── */
 #include "base/re0_limits.h"
 
 typedef struct {
@@ -48,7 +48,7 @@ static char *parse_string_raw(Parser *p) {
         }
         if (len >= RE0_MAX_JSON_STRING) {
             free(buf);
-            return NULL;  /* 字符串超过上限 */
+            return NULL;  /* string exceeds limit */
         }
         if (len + 1 >= cap) {
             cap = cap * 2;

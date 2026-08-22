@@ -1,4 +1,4 @@
-/* std/vec — 动态整数向量(vec 句柄可跨函数传递) */
+/* std/vec — dynamic integer vector (vec handle can be passed across functions) */
 fn new_vec() -> vec { return vec_new() }
 fn push_val(v: vec, x: i64) { vec_push(v, x) }
 fn get_val(v: vec, i: i64) -> i64 { return vec_get(v, i) }

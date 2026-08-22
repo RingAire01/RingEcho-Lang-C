@@ -21,112 +21,114 @@ void  re0_gc_mutex_unlock(void *m);
 #endif
 
 /* ════════════════════════════════════════════════════════════
- *  Re0GcEngine — GC 引擎门面
+ *  Re0GcEngine — GC engine facade
  *
- *  统一管理堆对象的生命周期，支持三种模式 × 三种算法。
+ *  Unified heap object lifecycle management: 3 modes x 3 algorithms.
  *
- *  mode（何时回收）：
- *    NONE   — 不自动回收，依赖手动 free / engine destroy 兜底
- *    AUTO   — 分配量达阈值时自动 mark-sweep
- *    MANUAL — 仅 collect() API 显式触发
+ *  mode (when to collect):
+ *    NONE   — no automatic reclamation; manual free / engine destroy as backstop
+ *    AUTO   — auto mark-sweep when allocations reach the threshold
+ *    MANUAL — only triggered explicitly via collect()
  *
- *  algo（如何回收）：
- *    TRACING   — mark-sweep 从 roots 遍历对象图（本次完整实现）
- *    ARC_CYCLE — 引用计数 + 循环检测（接口预留）
- *    HYBRID    — OWNED 即时释放 + 其余 tracing（接口预留）
+ *  algo (how to collect):
+ *    TRACING   — mark-sweep walking the object graph from roots (fully implemented)
+ *    ARC_CYCLE — reference counting + cycle detection (interface reserved)
+ *    HYBRID    — OWNED instant release + tracing for the rest (interface reserved)
  *
- *  所有关键操作通过 Re0GcListeners 广播事件。
+ *  All key operations broadcast events via Re0GcListeners.
  *
- *  线程模型（重要）：
- *    引擎所有公开 API 由内部互斥锁串行化（粗粒度，正确优先）。
- *    所有 API 均可在任意线程调用，但单个引擎实例上的操作不会
- *    并发执行 —— 无读并发路径，吞吐换正确性。
- *    回调（trace/dtor/listener）在锁内执行：回调内不得调用同一
- *    引擎的其他 API（自锁死锁，release_chain 的 GRAY 重入防护
- *    同样覆盖 dtor 跨链释放场景）。
+ *  Thread model (important):
+ *    Every public API is serialized by an internal mutex (coarse-grained,
+ *    correctness first). All APIs may be called from any thread, but
+ *    operations on a single engine instance never run concurrently —
+ *    no concurrent-read path; throughput traded for correctness.
+ *    Callbacks (trace/dtor/listener) execute under the lock: callbacks
+ *    must not call other APIs of the same engine (self-deadlock); the
+ *    GRAY reentry guard of release_chain also covers cross-chain
+ *    releases issued from dtors.
  * ════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    Re0GcConfig    config;          /* 运行时配置 */
-    Re0GcObject   *head;            /* 对象链表头 */
-    int            obj_count;       /* 链表对象计数 */
-    Re0GcRootSet   roots;           /* GC 根集 */
-    Re0GcStats     stats;           /* 累计统计 */
-    Re0GcListeners listeners;       /* 事件监听器 */
-    int            alloc_since_gc;  /* 自上次回收后的分配计数 */
-    int            next_threshold;  /* AUTO 模式下次触发阈值 */
-    bool           collecting;      /* 正在回收（防重入） */
+    Re0GcConfig    config;          /* runtime configuration */
+    Re0GcObject   *head;            /* object list head */
+    int            obj_count;       /* objects in list */
+    Re0GcRootSet   roots;           /* GC root set */
+    Re0GcStats     stats;           /* cumulative statistics */
+    Re0GcListeners listeners;       /* event listeners */
+    int            alloc_since_gc;  /* allocations since last collection */
+    int            next_threshold;  /* next AUTO trigger threshold */
+    bool           collecting;      /* collection in progress (reentry guard) */
 #if defined(RE0_PLATFORM_WINDOWS)
     void          *lock;            /* CRITICAL_SECTION* */
 #else
-    pthread_mutex_t lock;           /* 全局互斥锁（粗粒度） */
+    pthread_mutex_t lock;           /* coarse-grained global mutex */
 #endif
 } Re0GcEngine;
 
-/* ── 生命周期 ── */
+/* ── lifecycle ── */
 
-/* 创建引擎。config 决定 mode/algo/threshold。 */
+/* Create an engine. config selects mode/algo/threshold. */
 Re0GcEngine *re0_gc_engine_new(Re0GcConfig config);
 
-/* 销毁引擎：释放所有存活对象、根集、监听器。 */
+/* Destroy the engine: frees all surviving objects, roots, listeners. */
 void re0_gc_engine_destroy(Re0GcEngine *eng);
 
-/* ── 分配 / 释放 ── */
+/* ── allocation / free ── */
 
-/* 分配一个 GC 跟踪对象。
- * AUTO 模式下，超阈值时自动触发回收。
- * 返回的对象已挂入引擎链表，ref_count = 1（OWNED/BORROWED）或 0。
+/* Allocate a GC-tracked object.
+ * Under AUTO mode a collection is triggered when the threshold is exceeded.
+ * The returned object is linked into the engine list with ref_count = 1.
  */
 Re0GcObject *re0_gc_engine_alloc(Re0GcEngine *eng, size_t size,
                                   Re0PtrKind kind,
                                   Re0GcTraceFn trace, Re0GcDtorFn dtor);
 
-/* 分配并清零 */
+/* Allocate and zero-fill */
 Re0GcObject *re0_gc_engine_alloc_zero(Re0GcEngine *eng, size_t size,
                                        Re0PtrKind kind,
                                        Re0GcTraceFn trace, Re0GcDtorFn dtor);
 
-/* 手动释放单个对象（从链表移除 + 析构 + free）。
- * NONE/MANUAL 模式下即时生效；AUTO 模式也可手动释放。
+/* Manually free a single object (list unlink + destroy + free).
+ * Immediate under NONE/MANUAL; also allowed under AUTO.
  */
 void re0_gc_engine_free(Re0GcEngine *eng, Re0GcObject *obj);
 
-/* strdup 便捷接口：分配 GC 跟踪的字符串 */
+/* strdup convenience: allocate a GC-tracked string */
 char *re0_gc_engine_strdup(Re0GcEngine *eng, const char *s);
 
-/* ── 引用计数（ARC 算法使用） ── */
+/* ── reference counting (ARC algorithm) ── */
 void re0_gc_engine_retain(Re0GcEngine *eng, Re0GcObject *obj);
 void re0_gc_engine_release(Re0GcEngine *eng, Re0GcObject *obj);
 
-/* ── 根集管理 ── */
+/* ── root set management ── */
 bool re0_gc_engine_add_root(Re0GcEngine *eng, Re0GcObject *obj);
 bool re0_gc_engine_remove_root(Re0GcEngine *eng, Re0GcObject *obj);
 
-/* ── 回收 ── */
+/* ── collection ── */
 
-/* 显式触发回收。
- * MANUAL 模式的主要入口；AUTO 模式也可手动触发。
- * NONE 模式仅释放 ref_count <= 0 的悬挂对象。
+/* Trigger a collection explicitly.
+ * Main entry under MANUAL mode; also usable under AUTO.
+ * Under NONE mode only frees ref_count <= 0 dangling objects.
  */
 void re0_gc_engine_collect(Re0GcEngine *eng);
 
-/* ── 统计 / 事件 ── */
+/* ── statistics / events ── */
 
-/* 获取当前统计快照 */
+/* Snapshot the current statistics */
 void re0_gc_engine_stats(Re0GcEngine *eng, Re0GcStats *out);
 
-/* 注册事件监听器 */
+/* Register an event listener */
 bool re0_gc_engine_on_event(Re0GcEngine *eng, Re0GcCallback fn, void *ctx);
 
-/* ── 配置 ── */
+/* ── configuration ── */
 
-/* 运行时切换模式 */
+/* Switch mode at runtime */
 void re0_gc_engine_set_mode(Re0GcEngine *eng, Re0GcMode mode);
 
-/* 运行时切换算法 */
+/* Switch algorithm at runtime */
 void re0_gc_engine_set_algo(Re0GcEngine *eng, Re0GcAlgo algo);
 
-/* 设置 verbose（打印 GC 事件到 stderr） */
+/* Set verbose (print GC events to stderr) */
 void re0_gc_engine_set_verbose(Re0GcEngine *eng, bool verbose);
 
 #endif

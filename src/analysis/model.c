@@ -17,7 +17,7 @@ void re0_model_init(Re0SemanticModel *m) {
 }
 
 /* ════════════════════════════════════════
- *  Struct / Enum 注册（现有功能，增加 type_params）
+ *  Struct / Enum registration (existing feature, plus type_params)
  * ════════════════════════════════════════ */
 
 void re0_model_register_struct(Re0SemanticModel *m, const char *name,
@@ -72,7 +72,7 @@ int re0_model_variant_tag(Re0EnumDef *def, const char *variant_name) {
 }
 
 /* ════════════════════════════════════════
- *  Trait 注册与查询
+ *  Trait registration and lookup
  * ════════════════════════════════════════ */
 
 void re0_model_register_trait(Re0SemanticModel *m, const char *name,
@@ -106,7 +106,7 @@ Re0TraitDef *re0_model_find_trait(Re0SemanticModel *m, const char *name) {
 }
 
 /* ════════════════════════════════════════
- *  Impl 注册与查询
+ *  Impl registration and lookup
  * ════════════════════════════════════════ */
 
 void re0_model_register_impl(Re0SemanticModel *m, const char *struct_name,
@@ -134,7 +134,7 @@ bool re0_model_has_impl(Re0SemanticModel *m, const char *struct_name,
 }
 
 /* ════════════════════════════════════════
- *  方法派发表
+ *  Method dispatch table
  * ════════════════════════════════════════ */
 
 void re0_model_register_method(Re0SemanticModel *m, const char *struct_name,
@@ -158,7 +158,7 @@ const char *re0_model_lookup_method(Re0SemanticModel *m, const char *struct_name
 }
 
 /* ════════════════════════════════════════
- *  方法符号 mangling
+ *  Method symbol mangling
  * ════════════════════════════════════════ */
 
 const char *re0_model_method_symbol(const char *trait, const char *struct_name,
@@ -172,7 +172,7 @@ const char *re0_model_method_symbol(const char *trait, const char *struct_name,
 }
 
 /* ════════════════════════════════════════
- *  类型别名
+ *  Type aliases
  * ════════════════════════════════════════ */
 
 void re0_model_register_type_alias(Re0SemanticModel *m, const char *name,
@@ -192,7 +192,7 @@ const char *re0_model_resolve_type_alias(Re0SemanticModel *m, const char *name) 
 }
 
 /* ════════════════════════════════════════
- *  函数签名
+ *  Function signatures
  * ════════════════════════════════════════ */
 
 void re0_model_register_fn(Re0SemanticModel *m, const char *name,
@@ -228,7 +228,7 @@ Re0FnSignature *re0_model_find_fn(Re0SemanticModel *m, const char *name) {
 }
 
 /* ════════════════════════════════════════
- *  标准类型
+ *  Standard types
  * ════════════════════════════════════════ */
 
 Re0Type *re0_model_std_type(const char *name) {
@@ -238,7 +238,7 @@ Re0Type *re0_model_std_type(const char *name) {
 }
 
 /* ════════════════════════════════════════
- *  释放
+ *  Free
  * ════════════════════════════════════════ */
 
 void re0_model_free(Re0SemanticModel *m) {

@@ -1,9 +1,9 @@
 #include "base/safe.h"
 /*
- * workspace.c — 多文件工作区实现
+ * workspace.c — multi-file workspace implementation
  *
- * 从入口文件开始，解析 import 语句，
- * 递归加载 .reo 依赖文件，合并所有顶层语句。
+ * Starting from the entry file, parse import statements,
+ * recursively load .reo dependency files, merge all top-level statements.
  */
 #include "exec/workspace.h"
 #include "platform.h"
@@ -41,7 +41,7 @@ static void dirname_impl(char *path) {
 
 void re0_workspace_init(Re0Workspace *ws, const char *entry_path) {
     memset(ws, 0, sizeof(*ws));
-    /* 提取入口文件目录作为基准路径 */
+    /* extract entry file directory as base path */
     char tmp[RE0_MAX_PATH];
     strncpy(tmp, entry_path, sizeof(tmp) - 1);
     tmp[sizeof(tmp)-1] = '\0';
@@ -49,14 +49,14 @@ void re0_workspace_init(Re0Workspace *ws, const char *entry_path) {
     snprintf(ws->base_dir, sizeof(ws->base_dir), "%s", tmp);
 }
 
-/* 检查文件是否已加载（去重） */
+/* check if a file is already loaded (deduplication) */
 static bool already_loaded(Re0Workspace *ws, const char *path) {
     for (int i = 0; i < ws->file_count; i++)
         if (strcmp(ws->files[i].path, path) == 0) return true;
     return false;
 }
 
-/* 记录已加载文件 */
+/* record loaded file */
 static void mark_loaded(Re0Workspace *ws, const char *path) {
     if (ws->file_count >= RE0_MAX_FILES) return;
     strncpy(ws->files[ws->file_count].path, path, RE0_MAX_PATH - 1);
@@ -65,7 +65,7 @@ static void mark_loaded(Re0Workspace *ws, const char *path) {
     ws->file_count++;
 }
 
-/* 从 import 语句提取依赖文件路径
+/* extract dependency file path from import statement
  * import "math"           → math.reo
  * import "utils/helpers"  → utils/helpers.reo
  * from "math" { add }     → math.reo
@@ -112,22 +112,22 @@ static bool resolve_import_path(Re0Stmt *stmt, char *out, size_t out_cap,
     }
     if (!mod || out_cap == 0) return false;
     if (!is_safe_module_path(mod)) return false;
-    /* 1. 尝试项目本地: base_dir/mod.reo */
+    /* 1. try project-local: base_dir/mod.reo */
     if (!write_import_path(out, out_cap, "%s/%s.reo", base_dir, mod, "", "")) return false;
     if (access(out, R_OK) == 0) return true;
 
-    /* 2. 尝试虚拟环境: .renv/lib/std/mod.reo 和 packages/mod.reo */
+    /* 2. try virtual environment: .renv/lib/std/mod.reo and packages/mod.reo */
     char env_dir[512];
     if (reo_venv_detect(env_dir, sizeof(env_dir))) {
-        /* 标准库 */
+        /* standard library */
         if (write_import_path(out, out_cap, "%s/%s/%s/%s.reo", env_dir, RE0_VENV_LIB, RE0_VENV_STD, mod) &&
             access(out, R_OK) == 0) return true;
-        /* 第三方包 */
+        /* third-party packages */
         if (write_import_path(out, out_cap, "%s/%s/%s/%s.reo", env_dir, RE0_VENV_LIB, RE0_VENV_PACKAGES, mod) &&
             access(out, R_OK) == 0) return true;
     }
 
-    /* 3. 全局: ~/.re/lib/mod.reo */
+    /* 3. global: ~/.re/lib/mod.reo */
     const char *home =
 #if defined(RE0_PLATFORM_WINDOWS)
         getenv("USERPROFILE");
@@ -140,11 +140,11 @@ static bool resolve_import_path(Re0Stmt *stmt, char *out, size_t out_cap,
             access(out, R_OK) == 0) return true;
     }
 
-    /* 4. fallback: base_dir/mod.reo（即使不存在也返回，让上层报错） */
+    /* 4. fallback: base_dir/mod.reo (return even if missing; let caller report error) */
     return write_import_path(out, out_cap, "%s/%s.reo", base_dir, mod, "", "");
 }
 
-/* 读取文件内容 */
+/* read file content */
 static char *read_file_content(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -165,7 +165,7 @@ static char *read_file_content(const char *path) {
         return NULL;
     }
     
-    /* 文件大小限制：防止大文件 DoS */
+    /* file size limit: prevent large-file DoS */
     if (sz > RE0_MAX_SOURCE_BYTES) {
         fclose(f);
         return NULL;
@@ -179,7 +179,7 @@ static char *read_file_content(const char *path) {
     
     size_t rd = fread(buf, 1, (size_t)sz, f);
     if (rd != (size_t)sz) {
-        /* 部分读取或错误 */
+        /* partial read or error */
         free(buf);
         fclose(f);
         return NULL;
@@ -190,7 +190,7 @@ static char *read_file_content(const char *path) {
     return buf;
 }
 
-/* 递归加载文件，返回合并的顶层语句 */
+/* recursively load files, return merged top-level stmts */
 static void load_file_recursive(Re0Workspace *ws, const char *path,
                                  Re0Arena *arena, Re0ErrorList *errors,
                                  Re0Lexer *lexer, Re0Parser *parser,
@@ -205,20 +205,20 @@ static void load_file_recursive(Re0Workspace *ws, const char *path,
         return;
     }
 
-    /* 词法分析 */
+    /* lexical analysis */
     if (!re0_lexer_tokenize(lexer, source, path)) {
         free(source);
         return;
     }
 
-    /* 解析 */
+    /* parse */
     re0_parser_init(parser, arena, errors);
     if (!re0_parser_parse(parser, &lexer->stream)) {
         free(source);
         return;
     }
 
-    /* 快照当前文件的语句（递归调用会重置 parser→stmts） */
+    /* snapshot current file's statements (recursive calls reset parser→stmts) */
     int stmt_count = (int)Re0StmtVec_len(&parser->stmts);
     Re0Stmt **local_stmts = NULL;
     if (stmt_count > 0) {
@@ -227,7 +227,7 @@ static void load_file_recursive(Re0Workspace *ws, const char *path,
             local_stmts[i] = parser->stmts.data[i];
     }
 
-    /* 第一遍：递归加载 import 依赖 */
+    /* first pass: recursively load import dependencies */
     for (int i = 0; i < stmt_count; i++) {
         Re0Stmt *s = local_stmts[i];
         if (s && s->kind == STMT_IMPORT) {
@@ -241,7 +241,7 @@ static void load_file_recursive(Re0Workspace *ws, const char *path,
         }
     }
 
-    /* 第二遍：收集非 import 语句 */
+    /* second pass: collect non-import statements */
     for (int i = 0; i < stmt_count; i++) {
         if (local_stmts[i] && local_stmts[i]->kind != STMT_IMPORT)
             Re0StmtVec_push(out_stmts, local_stmts[i]);

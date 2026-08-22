@@ -20,7 +20,8 @@ void re0_event_bus_subscribe(Re0EventBus *bus, Re0EventHandler fn, void *ctx) {
 void re0_event_bus_emit(Re0EventBus *bus, Re0Event *ev) {
     if (!bus || !ev) return;
     
-    /* 复制 handler 列表，避免在持有锁时调用回调（防止 deadlock） */
+    /* copy the handler list to avoid invoking callbacks while holding
+     * the lock (copy-then-invoke, prevents deadlock) */
     pthread_mutex_lock(&bus->mtx);
     Re0HandlerVec handlers;
     Re0HandlerVec_init(&handlers);
@@ -29,7 +30,7 @@ void re0_event_bus_emit(Re0EventBus *bus, Re0Event *ev) {
     }
     pthread_mutex_unlock(&bus->mtx);
     
-    /* 在锁外调用回调 */
+    /* invoke callbacks outside the lock */
     for (size_t i = 0; i < Re0HandlerVec_len(&handlers); i++) {
         if (handlers.data[i].fn)
             handlers.data[i].fn(ev, handlers.data[i].ctx);

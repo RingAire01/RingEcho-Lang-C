@@ -4,11 +4,11 @@
 #include "base/vec.h"
 #include <stdbool.h>
 
-/* ── 字段/变体定义 ── */
+/* ── Field/variant definitions ── */
 typedef struct { char *name; Re0Type *type; } Re0StructField;
 typedef struct { char *name; Re0Type **types; int type_count; } Re0EnumVariant;
 
-/* ── Struct 定义 ── */
+/* ── Struct definition ── */
 typedef struct {
     char *name;
     Re0StructField *fields;
@@ -17,7 +17,7 @@ typedef struct {
     int type_param_count;
 } Re0StructDef;
 
-/* ── Enum 定义 ── */
+/* ── Enum definition ── */
 typedef struct {
     char *name;
     char **variant_names;
@@ -25,7 +25,7 @@ typedef struct {
     int variant_count;
 } Re0EnumDef;
 
-/* ── Trait 方法签名 ── */
+/* ── Trait method signature ── */
 typedef struct {
     char *name;
     char **param_types;
@@ -33,33 +33,33 @@ typedef struct {
     char *ret_type;
 } Re0TraitMethod;
 
-/* ── Trait 定义 ── */
+/* ── Trait definition ── */
 typedef struct {
     char *name;
     Re0TraitMethod *methods;
     int method_count;
 } Re0TraitDef;
 
-/* ── Impl 块记录：struct → trait 映射 ── */
+/* ── Impl block record: struct -> trait mapping ── */
 typedef struct {
     char *struct_name;
     char *trait_name;       /* NULL = inherent impl */
 } Re0ImplEntry;
 
-/* ── 方法派发条目：(struct, method) → mangled symbol ── */
+/* ── Method dispatch entry: (struct, method) -> mangled symbol ── */
 typedef struct {
     char *struct_name;
     char *method_name;
     char *mangled_symbol;
 } Re0MethodEntry;
 
-/* ── 类型别名 ── */
+/* ── Type alias ── */
 typedef struct {
     char *name;
     char *target;
 } Re0TypeAlias;
 
-/* ── 函数签名 ── */
+/* ── Function signature ── */
 typedef struct {
     char *name;
     char **param_types;
@@ -107,23 +107,23 @@ void         re0_model_register_impl(Re0SemanticModel *m, const char *struct_nam
 bool         re0_model_has_impl(Re0SemanticModel *m, const char *struct_name,
                                 const char *trait_name);
 
-/* ── 方法派发表 ── */
+/* ── Method dispatch table ── */
 void         re0_model_register_method(Re0SemanticModel *m, const char *struct_name,
                                        const char *method_name, const char *mangled);
 const char  *re0_model_lookup_method(Re0SemanticModel *m, const char *struct_name,
                                      const char *method_name);
 
-/* ── 方法符号 mangling ── */
-/* trait=NULL → "{struct}_{method}"；否则 → "{trait}_{struct}_{method}" */
+/* ── Method symbol mangling ── */
+/* trait=NULL -> "{struct}_{method}"; otherwise -> "{trait}_{struct}_{method}" */
 const char  *re0_model_method_symbol(const char *trait, const char *struct_name,
                                      const char *method, char *out, size_t out_sz);
 
-/* ── 类型别名 ── */
+/* ── Type alias ── */
 void         re0_model_register_type_alias(Re0SemanticModel *m, const char *name,
                                            const char *target);
 const char  *re0_model_resolve_type_alias(Re0SemanticModel *m, const char *name);
 
-/* ── 函数签名 ── */
+/* ── Function signature ── */
 void         re0_model_register_fn(Re0SemanticModel *m, const char *name,
                                    char **param_types, int param_count,
                                    const char *ret_type,

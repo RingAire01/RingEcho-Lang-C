@@ -2,12 +2,13 @@
 #define RE0_GC_H
 
 /* ════════════════════════════════════════════════════════════
- *  re0_gc.h — GC 子系统聚合头文件 + 向后兼容层
+ *  re0_gc.h — GC subsystem aggregate header + backward-compat layer
  *
- *  新代码应直接使用 gc/ 下的模块化接口：
+ *  New code should use the modular interfaces under gc/ directly:
  *    #include "gc/gc_engine.h"
  *
- *  本文件保留旧 API 别名，确保已有调用方无需修改。
+ *  This file keeps the legacy API aliases so existing callers
+ *  compile unchanged.
  * ════════════════════════════════════════════════════════════ */
 
 #include "gc/gc_config.h"
@@ -18,16 +19,16 @@
 #include "gc/gc_stats.h"
 #include "gc/gc_engine.h"
 
-/* ── 类型别名 ── */
-typedef Re0GcEngine  Re0GcPool;   /* 旧 GcPool → 新 GcEngine */
-typedef Re0GcObject  Re0GcNode;   /* 旧 GcNode → 新 GcObject */
+/* ── type aliases ── */
+typedef Re0GcEngine  Re0GcPool;   /* legacy GcPool -> new GcEngine */
+typedef Re0GcObject  Re0GcNode;   /* legacy GcNode -> new GcObject */
 
-/* ── 旧枚举值名兼容 ── */
+/* ── legacy enum-name aliases ── */
 #define RE0_GC_NONE   RE0_GC_MODE_NONE
 #define RE0_GC_AUTO   RE0_GC_MODE_AUTO
 #define RE0_GC_MANUAL RE0_GC_MODE_MANUAL
 
-/* ── 兼容函数：以 NONE 模式创建引擎 ── */
+/* ── compat helpers: create an engine in NONE mode ── */
 
 static inline int re0_gc_mode_to_int(Re0GcMode m)
 {
@@ -51,7 +52,7 @@ static inline void re0_gc_collect(Re0GcPool *gc)
     re0_gc_engine_collect(gc);
 }
 
-/* ── 兼容：Re0Ptr 包装 ── */
+/* ── compat: Re0Ptr wrapper ── */
 typedef struct {
     Re0GcObject *node;
     bool nullable;

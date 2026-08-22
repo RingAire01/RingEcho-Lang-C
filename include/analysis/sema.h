@@ -29,9 +29,9 @@ typedef struct {
     Re0ScopeVec        child_scopes;
     bool               had_error;
     int                infer_depth;
-    Re0Type           *current_fn_return;   /* 当前函数返回类型（B3 校验用） */
-    int                loop_depth;          /* 当前循环嵌套深度（break/continue 校验用） */
-    int                fn_depth;            /* 当前函数嵌套深度（return 校验用） */
+    Re0Type           *current_fn_return;   /* current function return type (for B3 validation) */
+    int                loop_depth;          /* current loop nesting depth (for break/continue validation) */
+    int                fn_depth;            /* current function nesting depth (for return validation) */
 } Re0Sema;
 
 void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,

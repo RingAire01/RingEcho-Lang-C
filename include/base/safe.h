@@ -5,12 +5,12 @@
 #include <stdio.h>
 #include "base/re0_log.h"
 
-/* ── Checked allocation: OOM 时 abort 并报告 ──
+/* ── Checked allocation: abort with a report on OOM ──
  *
- * 生产环境原则：
- * - 内存分配失败不应该导致 segfault
- * - 应该在 abort 前打印清晰的错误消息
- * - arena 分配已由 arena.c 内部处理，此处仅覆盖堆分配
+ * Production principles:
+ * - memory allocation failure must not cause a segfault
+ * - a clear error message should be printed before abort
+ * - arena allocation is already handled inside arena.c; only heap allocation is covered here
  */
 
 static inline void *re0_xmalloc(size_t sz, const char *file, int line) {

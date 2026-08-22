@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (strcmp(cmd, "build") == 0 && argc < 3) {
-        /* rem build（无参数）：从 ringecho.toml 读取入口 */
+        /* rem build (no args): read entry from ringecho.toml */
         extern bool reo_toml_find_root(char *, size_t);
         extern ReoTomlConfig reo_toml_load(const char *);
         char root[512];
@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
         if (!write_path(release_dir, sizeof(release_dir), "%s/%s", target_dir, "Release")) return 1;
         char output_path[512];
         if (!write_path(output_path, sizeof(output_path), "%s/%s", release_dir, cfg.package_name)) return 1;
-        /* 确保输出目录存在 */
+        /* ensure output directory exists */
         if (!ensure_directory(target_dir) || !ensure_directory(release_dir)) {
             fprintf(stderr, "cannot create build output directory\n");
             return 1;

@@ -92,7 +92,7 @@ static void lint_stmt(Re0Stmt *s, Re0ErrorList *errors, int depth) {
                         "nesting depth exceeds %d", MAX_NESTING);
     switch (s->kind) {
         case STMT_LET:
-            /* shadowing 检测 */
+            /* shadowing detection */
             for (int i = 0; i < lint_var_count; i++)
                 if (strcmp(lint_vars[i].name, s->let_stmt.name) == 0) {
                     re0_error_append(errors, RE0_WARN, RE0_SPAN_ZERO, NULL,
@@ -146,7 +146,8 @@ static void lint_stmt(Re0Stmt *s, Re0ErrorList *errors, int depth) {
             for (int i = 0; i < s->function.param_count; i++) {
                 const char *pn = s->function.params[i].name;
                 lint_var_add(pn, 0);
-                /* self 与 _ 前缀参数视为有意使用,不报 unused */
+                /* 'self' and '_'-prefixed params are treated as
+                 * intentionally used; no unused warning */
                 if (strcmp(pn, "self") == 0 || pn[0] == '_')
                     lint_var_mark_used(pn);
             }

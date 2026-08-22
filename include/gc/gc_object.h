@@ -6,77 +6,80 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* ── 前向声明 ── */
+/* ── forward declarations ── */
 typedef struct Re0GcObject Re0GcObject;
 
-/* trace 访问器：遍历子对象时对每个子对象调用 */
+/* trace visitor: called for each child while walking children */
 typedef void (*Re0GcTraceVisitor)(Re0GcObject *child, void *ctx);
 
-/* trace 回调：对象知道如何遍历自身的子指针，调用 visit(child, ctx) */
+/* trace callback: the object knows how to walk its child pointers,
+ * calling visit(child, ctx) for each */
 typedef void (*Re0GcTraceFn)(Re0GcObject *self, Re0GcTraceVisitor visit, void *ctx);
 
-/* 析构回调：在释放用户数据前调用，可清理内部资源 */
+/* destructor callback: invoked before freeing user data, may clean up
+ * internal resources */
 typedef void (*Re0GcDtorFn)(void *ptr, size_t size);
 
-/* ── 对象图节点 ──
- * 每个 GC 跟踪的堆分配对应一个 GcObject 元数据节点。
- * 节点本身和用户数据分别分配，避免元数据被误释放。
+/* ── object-graph node ──
+ * Each GC-tracked heap allocation maps to one GcObject metadata node.
+ * The node and the user data are allocated separately so the metadata
+ * is never freed by mistake.
  */
 struct Re0GcObject {
-    void         *ptr;         /* 用户数据指针 */
-    size_t        size;        /* 用户数据大小（字节） */
-    Re0PtrKind    kind;        /* 指针语义 */
+    void         *ptr;         /* user data pointer */
+    size_t        size;        /* user data size in bytes */
+    Re0PtrKind    kind;        /* pointer semantics */
 
-    /* 引用计数 — ARC 算法使用；tracing 模式下仅做统计参考 */
+    /* reference count — used by the ARC algorithm; advisory under tracing */
     int32_t       ref_count;
 
-    /* 三色标记 — tracing + 并发预留 */
+    /* tri-color marking — tracing + concurrency reserved */
     uint8_t       color;       /* RE0_GC_COLOR_WHITE/GRAY/BLACK */
 
-    /* 回调 */
-    Re0GcTraceFn  trace;       /* 遍历子对象（NULL 表示叶子节点） */
-    Re0GcDtorFn   dtor;        /* 析构（NULL 表示无需清理） */
+    /* callbacks */
+    Re0GcTraceFn  trace;       /* walk children (NULL = leaf node) */
+    Re0GcDtorFn   dtor;        /* destructor (NULL = nothing to clean) */
 
-    /* 双向链表 — 挂在 GcEngine 上，O(1) 插入/删除 */
+    /* doubly-linked list — hung on the GcEngine, O(1) insert/remove */
     Re0GcObject  *prev;
     Re0GcObject  *next;
 };
 
-/* ── 生命周期 ── */
+/* ── lifecycle ── */
 
-/* 创建元数据节点 + 分配用户数据。失败返回 NULL。 */
+/* create a metadata node + allocate user data. returns NULL on failure. */
 Re0GcObject *re0_gc_object_alloc(size_t size, Re0PtrKind kind,
                                   Re0GcTraceFn trace, Re0GcDtorFn dtor);
 
-/* 同上，但用户数据区域清零 */
+/* same, but the user data region is zero-filled */
 Re0GcObject *re0_gc_object_alloc_zero(size_t size, Re0PtrKind kind,
                                        Re0GcTraceFn trace, Re0GcDtorFn dtor);
 
-/* 仅创建元数据节点，用户数据由调用者提供（attach 模式） */
+/* create only the metadata node; user data provided by the caller (attach mode) */
 Re0GcObject *re0_gc_object_wrap(void *ptr, size_t size, Re0PtrKind kind,
                                   Re0GcTraceFn trace, Re0GcDtorFn dtor);
 
-/* 析构 + 释放用户数据 + 释放节点本身 */
+/* destroy + free user data + free the node itself */
 void re0_gc_object_destroy(Re0GcObject *obj);
 
-/* 仅析构 + 释放用户数据，不释放节点（sweep 时链表操作在前） */
+/* destroy + free user data only, keep the node (sweep unlinks first) */
 void re0_gc_object_free_payload(Re0GcObject *obj);
 
-/* 重置标记颜色为 WHITE（新一轮 GC 前调用） */
+/* reset the mark color to WHITE (before a new GC cycle) */
 static inline void re0_gc_object_set_white(Re0GcObject *o) {
     if (o) o->color = RE0_GC_COLOR_WHITE;
 }
 
-/* 判断对象是否存活（BLACK 或 GRAY） */
+/* whether the object is alive (BLACK or GRAY) */
 static inline bool re0_gc_object_is_alive(Re0GcObject *o) {
     return o && o->color != RE0_GC_COLOR_WHITE;
 }
 
-/* 引用计数操作 */
+/* reference-count operations */
 void re0_gc_object_retain(Re0GcObject *o);
 void re0_gc_object_release(Re0GcObject *o);
 
-/* 获取用户数据指针的便捷包装 */
+/* convenience wrapper to get the user data pointer */
 static inline void *re0_gc_object_data(Re0GcObject *o) {
     return o ? o->ptr : NULL;
 }

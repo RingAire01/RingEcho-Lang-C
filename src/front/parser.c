@@ -420,7 +420,7 @@ static Re0Expr *parse_prec(Re0Parser *p, int min_prec) {
             advance(p);
             Re0Expr *right = parse_prec(p, 1);
             if (right && right->kind == EXPR_CALL) {
-                /* 在参数列表首位插入 left */
+                /* insert left at the head of the argument list */
                 int n = right->call.arg_count;
                 Re0Expr **new_args = (Re0Expr**)xcalloc((size_t)n + 1, sizeof(Re0Expr*));
                 new_args[0] = left;
@@ -510,7 +510,7 @@ static Re0Stmt *parse_if_stmt(Re0Parser *p) {
     s->if_stmt.branch_count = 1; s->if_stmt.else_body = NULL; s->if_stmt.else_count = 0;
     if (check(p, TK_KW_ELSE)) {
         advance(p);
-        /* else if → 递归解析为嵌套 STMT_IF */
+        /* else if → recursively parse as nested STMT_IF */
         if (check(p, TK_KW_IF)) {
             s->if_stmt.else_body = (void*)xcalloc(1, sizeof(Re0Stmt*));
             s->if_stmt.else_body[0] = parse_if_stmt(p);
@@ -580,7 +580,8 @@ static Re0Stmt *parse_fn(Re0Parser *p) {
     expect(p, TK_LBRACE); Re0StmtVec body; Re0StmtVec_init(&body);
     while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) Re0StmtVec_push(&body, parse_stmt(p));
     expect(p, TK_RBRACE);
-    /* 隐式 return：如果函数体最后一条是 expr 语句且函数有返回类型，自动包为 return */
+    /* implicit return: if the last statement of the body is an expr statement
+     * and the function has a return type, wrap it as return automatically */
     size_t blen = Re0StmtVec_len(&body);
     if (blen > 0 && ret_type) {
         Re0Stmt *last = body.data[blen - 1];
@@ -636,7 +637,7 @@ static Re0Stmt *parse_extern(Re0Parser *p) {
 static Re0Stmt *parse_import(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     char *mod_name = NULL;
-    /* 支持: import "path/file" 或 import module_name */
+    /* supports: import "path/file" or import module_name */
     if (check(p, TK_STRING)) {
         mod_name = re0_arena_strdup(p->arena, peek(p)->str_val);
         advance(p);
@@ -744,7 +745,7 @@ static Re0Stmt *parse_type_alias(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     Re0Token nm = expect(p, TK_IDENT); expect(p, TK_EQUAL);
     char *target = parse_type_name(p);
-    if (check(p, TK_SEMICOLON)) advance(p);  /* 分号可选（与 Rust reo 一致） */
+    if (check(p, TK_SEMICOLON)) advance(p);  /* semicolon is optional (same as Rust reo) */
     Re0Stmt *s = re0_stmt_make(STMT_TYPE_ALIAS, span);
     s->type_alias.name = re0_arena_strdup(p->arena, nm.str_val);
     s->type_alias.target = target;
@@ -853,7 +854,7 @@ static Re0Stmt *parse_component(Re0Parser *p) {
             if (fname.kind == TK_ERROR) break;
             expect(p, TK_COLON);
             char *ftype = parse_type_name(p);
-            /* 可选默认值: state x: T = value */
+            /* optional default value: state x: T = value */
             if (check(p, TK_EQUAL)) { advance(p); parse_expr(p); }
             PARSER_GROW(state, sc, scap, Re0StructFieldDecl);
             state[sc].name = re0_arena_strdup(p->arena, fname.str_val);
@@ -957,12 +958,12 @@ static Re0Stmt *parse_stmt_inner(Re0Parser *p) {
     if ((check(p, TK_IDENT) || check(p, TK_KW_SELF)) &&
         p->stream->cursor + 1 < Re0TokenVec_len(&p->stream->tokens)) {
         Re0Token *peek2 = &p->stream->tokens.data[p->stream->cursor + 1];
-        /* 普通赋值: var = ... */
+        /* plain assignment: var = ... */
         if (peek2->kind == TK_EQUAL || peek2->kind == TK_PLUSEQUAL ||
             peek2->kind == TK_MINUSEQUAL || peek2->kind == TK_STAREQUAL ||
             peek2->kind == TK_SLASHEQUAL)
             return parse_assign(p);
-        /* 字段赋值: obj.field = ... / self.field = ...（3 token lookahead 确认 = 在 . 之后） */
+        /* field assignment: obj.field = ... / self.field = ... (3-token lookahead confirms = after .) */
         if (peek2->kind == TK_DOT && p->stream->cursor + 3 < Re0TokenVec_len(&p->stream->tokens)) {
             Re0Token *peek4 = &p->stream->tokens.data[p->stream->cursor + 3];
             if (peek4->kind == TK_EQUAL || peek4->kind == TK_PLUSEQUAL ||
@@ -999,11 +1000,11 @@ bool re0_parser_parse(Re0Parser *p, Re0TokenStream *stream) {
         Re0Token *t = peek(p); if (!t || t->kind == TK_EOF) break;
         size_t before = re0_stream_pos(p->stream);
         Re0Stmt *s = parse_stmt(p); if (s) Re0StmtVec_push(&p->stmts, s);
-        /* error recovery: 同步到下一个语句边界 */
+        /* error recovery: resync to the next statement boundary */
         if (re0_stream_pos(p->stream) == before) {
             advance(p); /* force-consume the stuck token */
         }
-        /* 如果解析出错，跳到下一个 `;` 或 `}` 恢复 */
+        /* if parsing failed, skip to the next `;` or `}` to recover */
         if (p->had_error) {
             p->had_any_error = true;
             int skip = 0;
@@ -1015,7 +1016,7 @@ bool re0_parser_parse(Re0Parser *p, Re0TokenStream *stream) {
                 if (tok->kind == TK_LBRACE) skip++;
                 advance(p);
             }
-            p->had_error = false; /* 恢复，继续解析后续语句 */
+            p->had_error = false; /* recovered, continue parsing subsequent statements */
         }
     }
     return !p->had_any_error;

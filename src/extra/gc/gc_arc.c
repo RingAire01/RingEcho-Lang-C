@@ -3,7 +3,7 @@
 #include "gc/gc_tracing.h"
 #include <stdlib.h>
 
-/* ── 内部：工作栈（迭代式释放，防栈溢出） ── */
+/* ── internal: work stack (iterative release, stack-overflow safe) ── */
 
 #define ARC_WQ_INIT_CAP 32
 
@@ -27,25 +27,25 @@ static bool arc_wq_push(ArcWorkQueue *wq, Re0GcObject *obj)
     return true;
 }
 
-/* trace visitor：release 子对象，ref_count==0 则标记并入队。
- * 使用 GRAY 标记"已入队"，避免同一对象被多次入队。 */
+/* trace visitor: release child objects; mark and enqueue when ref_count==0.
+ * GRAY marks "already queued" so an object is never enqueued twice. */
 static void arc_release_visitor(Re0GcObject *child, void *ctx)
 {
     ArcWorkQueue *wq = (ArcWorkQueue *)ctx;
     if (!child) return;
-    if (child->color == RE0_GC_COLOR_GRAY) return;   /* 已入队 */
+    if (child->color == RE0_GC_COLOR_GRAY) return;   /* already queued */
 
     re0_gc_object_release(child);
 
     if (child->ref_count <= 0 &&
         child->kind != RE0_PTR_KIND_BORROWED) {
-        child->color = RE0_GC_COLOR_GRAY;             /* 标记已入队 */
+        child->color = RE0_GC_COLOR_GRAY;             /* mark as queued */
         arc_wq_push(wq, child);
     }
 }
 
 /* ════════════════════════════════════════════════════
- *  ARC 即时释放链（迭代式）
+ *  ARC immediate release chain (iterative)
  * ════════════════════════════════════════════════════ */
 
 void re0_gc_arc_release_chain(Re0GcEngine *eng, Re0GcObject *start)
@@ -66,12 +66,12 @@ void re0_gc_arc_release_chain(Re0GcEngine *eng, Re0GcObject *start)
     while (wq.sp > 0) {
         Re0GcObject *obj = wq.data[--wq.sp];
 
-        /* 遍历子对象：release 引用计数，级联入队 */
+        /* trace children: release ref counts, cascade-enqueue */
         if (obj->trace) {
             obj->trace(obj, arc_release_visitor, &wq);
         }
 
-        /* 释放对象本身 */
+        /* free the object itself */
         re0_gc_engine_destroy_obj(eng, obj);
     }
 
@@ -79,14 +79,14 @@ void re0_gc_arc_release_chain(Re0GcEngine *eng, Re0GcObject *start)
 }
 
 /* ════════════════════════════════════════════════════
- *  循环检测（tracing backup）
+ *  cycle detection (tracing backup)
  * ════════════════════════════════════════════════════ */
 
 void re0_gc_arc_collect(Re0GcEngine *eng)
 {
     if (!eng) return;
 
-    /* 通知：回收开始 */
+    /* notify: collection start */
     if (eng->listeners.count > 0) {
         Re0GcEvent ev = re0_gc_event_make(
             RE0_GC_EV_COLLECT_START, eng->config.mode, eng->config.algo);
@@ -95,11 +95,11 @@ void re0_gc_arc_collect(Re0GcEngine *eng)
         re0_gc_listeners_emit(&eng->listeners, &ev);
     }
 
-    /* phase 1：重置颜色 */
+    /* phase 1: reset colors */
     re0_gc_tracing_reset_colors(eng->head);
 
-    /* phase 2：从 roots 出发标记可达对象。
-     * mark OOM 时放弃 sweep，避免误回收可达对象（同 C1）。 */
+    /* phase 2: mark reachable objects from roots.
+     * On mark OOM skip the sweep to avoid reclaiming live objects. */
     if (re0_gc_tracing_mark(&eng->roots, &eng->listeners)) {
         if (eng->listeners.count > 0) {
             Re0GcEvent ev = re0_gc_event_make(
@@ -110,9 +110,10 @@ void re0_gc_arc_collect(Re0GcEngine *eng)
         return;
     }
 
-    /* phase 3：回收不可达对象（含循环垃圾和悬挂对象）。
-     * ARC 模式下链表中的对象 ref_count 通常 > 0（因为 ==0 的已被即时释放），
-     * 但也可能有遗留的悬挂对象，统一回收。 */
+    /* phase 3: reclaim unreachable objects (cycles and dangling).
+     * Under ARC most list objects still have ref_count > 0 (zero-count
+     * ones were released immediately), but leftover dangling objects
+     * may exist — sweep them all. */
     int freed = 0;
     Re0GcObject *obj = eng->head;
     while (obj) {
@@ -125,12 +126,12 @@ void re0_gc_arc_collect(Re0GcEngine *eng)
             re0_gc_engine_destroy_obj(eng, obj);
             freed++;
         } else {
-            obj->color = RE0_GC_COLOR_WHITE;   /* 重置存活对象颜色 */
+            obj->color = RE0_GC_COLOR_WHITE;   /* reset surviving object color */
         }
         obj = next;
     }
 
-    /* 通知：回收完成 */
+    /* notify: collection done */
     if (eng->listeners.count > 0) {
         Re0GcEvent ev = re0_gc_event_make(
             RE0_GC_EV_COLLECT_DONE, eng->config.mode, eng->config.algo);

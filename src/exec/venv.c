@@ -1,5 +1,5 @@
 /*
- * venv.c — RingEcho 虚拟环境管理实现
+ * venv.c — RingEcho virtual environment management implementation
  */
 #include "exec/venv.h"
 #include "platform.h"
@@ -21,7 +21,7 @@
 #endif
 #include "base/re0_log.h"
 
-/* ── 路径工具 ── */
+/* ── path utilities ── */
 
 static void join_path(char *out, size_t cap, const char *a, const char *b) {
     if (!out || cap == 0) return;
@@ -49,7 +49,7 @@ static bool ensure_dir(const char *path) {
     return errno == EEXIST && dir_exists(path);
 }
 
-/* ── 标准库源码（内嵌）── */
+/* ── standard library sources (embedded) ── */
 
 static const char *std_sources[] = {
     "/* std/io — I/O */\nfn read_file(path: str) -> str { return file_read(path) }\nfn write_file(path: str, data: str) { file_write(path, data) }\nfn print_line(s: str) { println(s) }\n",
@@ -58,13 +58,13 @@ static const char *std_sources[] = {
     "/* std/vec */\nfn new_vec() -> i64 { return vec_new() }\nfn push_val(v: i64, x: i64) { vec_push(v, x) }\nfn get_val(v: i64, i: i64) -> i64 { return vec_get(v, i) }\nfn size(v: i64) -> i64 { return vec_len(v) }\n",
 };
 
-/* ── 创建虚拟环境 ── */
+/* ── create virtual environment ── */
 
 bool reo_venv_create(const char *project_dir) {
     char env_dir[512];
     join_path(env_dir, sizeof(env_dir), project_dir, RE0_VENV_DIR);
 
-    /* 创建目录结构 */
+    /* create directory structure */
     char lib_dir[512], std_dir[512], pkg_dir[512], bin_dir[512];
     join_path(lib_dir, sizeof(lib_dir), env_dir, RE0_VENV_LIB);
     join_path(std_dir, sizeof(std_dir), lib_dir, RE0_VENV_STD);
@@ -77,7 +77,7 @@ bool reo_venv_create(const char *project_dir) {
     if (!ensure_dir(pkg_dir)) return false;
     if (!ensure_dir(bin_dir)) return false;
 
-    /* 写入配置文件 */
+    /* write configuration file */
     char config_path[512];
     join_path(config_path, sizeof(config_path), env_dir, RE0_VENV_CONFIG);
     FILE *f = fopen(config_path, "w");
@@ -87,7 +87,7 @@ bool reo_venv_create(const char *project_dir) {
     fprintf(f, "created = \"%s\"\n", "auto");
     fclose(f);
 
-    /* 安装标准库 */
+    /* install standard library */
     if (!reo_venv_install_std(env_dir)) {
         re0_log(RE0_LOG_WARN, "failed to install std library");
     }
@@ -101,7 +101,7 @@ bool reo_venv_create(const char *project_dir) {
     return true;
 }
 
-/* ── 安装标准库 ── */
+/* ── install standard library ── */
 
 bool reo_venv_install_std(const char *env_dir) {
     char std_dir[512];
@@ -120,7 +120,7 @@ bool reo_venv_install_std(const char *env_dir) {
 }
 
 #if defined(RE0_PLATFORM_WINDOWS)
-/* Windows 上的简单 dirname 实现 */
+/* simple dirname implementation on Windows */
 static void dirname_win(char *path) {
     if (!path || !*path) return;
     char *last_sep = strrchr(path, '\\');
@@ -134,7 +134,7 @@ static void dirname_win(char *path) {
 }
 #endif
 
-/* ── 检测虚拟环境 ── */
+/* ── detect virtual environment ── */
 
 bool reo_venv_detect(char *out_env_dir, size_t cap) {
     if (!out_env_dir || cap == 0) return false;
@@ -145,7 +145,7 @@ bool reo_venv_detect(char *out_env_dir, size_t cap) {
     if (!getcwd(cwd, sizeof(cwd))) return false;
 #endif
 
-    /* 从当前目录向上查找 .renv/ */
+    /* search upward from current directory for .renv/ */
     char dir[512];
     strncpy(dir, cwd, sizeof(dir) - 1);
     dir[sizeof(dir)-1] = '\0';
@@ -158,7 +158,7 @@ bool reo_venv_detect(char *out_env_dir, size_t cap) {
             out_env_dir[cap - 1] = '\0';
             return true;
         }
-        /* 向上一级 */
+        /* go up one level */
         char current[sizeof(dir)];
         strncpy(current, dir, sizeof(current) - 1);
         current[sizeof(current) - 1] = '\0';
@@ -174,20 +174,20 @@ bool reo_venv_detect(char *out_env_dir, size_t cap) {
     return false;
 }
 
-/* ── import 路径解析（多级 fallback）── */
+/* ── import path resolution (multi-level fallback) ── */
 
 bool reo_venv_resolve_import(const char *module_name,
                               const char *project_dir,
                               const char *env_dir,
                               char *out_path, size_t cap) {
-    /* 1. 项目本地: project_dir/module_name.reo */
+    /* 1. project-local: project_dir/module_name.reo */
     if (project_dir) {
         join_path(out_path, cap, project_dir, module_name);
         strncat(out_path, ".reo", cap - strlen(out_path) - 1);
         if (access(out_path, R_OK) == 0) return true;
     }
 
-    /* 2. 虚拟环境第三方包: env_dir/lib/packages/module_name.reo */
+    /* 2. venv third-party package: env_dir/lib/packages/module_name.reo */
     if (env_dir) {
         char pkg_dir[512];
         snprintf(pkg_dir, sizeof(pkg_dir), "%s/%s/%s", env_dir, RE0_VENV_LIB, RE0_VENV_PACKAGES);
@@ -195,7 +195,7 @@ bool reo_venv_resolve_import(const char *module_name,
         strncat(out_path, ".reo", cap - strlen(out_path) - 1);
         if (access(out_path, R_OK) == 0) return true;
 
-        /* 3. 虚拟环境标准库: env_dir/lib/std/module_name.reo */
+        /* 3. venv standard library: env_dir/lib/std/module_name.reo */
     char std_dir[600];
         snprintf(std_dir, sizeof(std_dir), "%s/%s/%s", env_dir, RE0_VENV_LIB, RE0_VENV_STD);
         join_path(out_path, cap, std_dir, module_name);
@@ -203,7 +203,7 @@ bool reo_venv_resolve_import(const char *module_name,
         if (access(out_path, R_OK) == 0) return true;
     }
 
-    /* 4. 全局: ~/.re/lib/module_name.reo */
+    /* 4. global: ~/.re/lib/module_name.reo */
     const char *home =
 #if defined(RE0_PLATFORM_WINDOWS)
         getenv("USERPROFILE");
@@ -222,7 +222,7 @@ bool reo_venv_resolve_import(const char *module_name,
     return false;
 }
 
-/* ── 输出激活脚本 ── */
+/* ── print activation script ── */
 
 void reo_venv_print_activate(const char *env_dir) {
     printf("# RingEcho virtual environment activation\n");

@@ -1,8 +1,8 @@
 /*
- * workspace.h — 多文件工作区管理
+ * workspace.h — multi-file workspace management
  *
- * 解析 import 语句，递归加载依赖文件，
- * 将所有顶层语句合并为单一编译单元。
+ * Parse import statements, recursively load dependency files,
+ * and merge all top-level statements into a single compilation unit.
  */
 #ifndef RE0_WORKSPACE_H
 #define RE0_WORKSPACE_H
@@ -35,10 +35,10 @@ void re0_workspace_init(Re0Workspace *ws, const char *entry_path);
  * on both '/' and '\' separators. Single source of truth for path safety. */
 bool re0_is_safe_rel_path(const char *path);
 
-/* 解析 import，递归加载依赖文件，合并所有顶层语句到 out。
- * 已加载文件不会重复加载（去重）。
- * arena 用于 AST 分配，errors 用于报告 IO 错误。
- * 返回合并后的顶层语句数组。 */
+/* Parse imports, recursively load dependency files, merge all top-level statements into out.
+ * Already-loaded files are not loaded twice (deduplication).
+ * arena is used for AST allocation; errors for reporting I/O errors.
+ * Returns the merged array of top-level statements. */
 Re0StmtVec re0_workspace_load(Re0Workspace *ws, const char *entry_path,
                                Re0Arena *arena, Re0ErrorList *errors,
                                Re0Lexer *lexer, Re0Parser *parser);

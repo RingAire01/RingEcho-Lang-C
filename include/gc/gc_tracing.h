@@ -7,39 +7,39 @@
 #include "gc_stats.h"
 #include "gc_events.h"
 
-/* ── Tracing mark-sweep 算法 ──
- * 三色标记（白/灰/黑）+ 灰色队列（worklist）。
- * 修复了旧实现 mark 不遍历子节点的缺陷。
+/* ── tracing mark-sweep algorithm ──
+ * Tri-color marking (white/gray/black) + gray worklist.
+ * Fixes the old implementation where mark never walked child nodes.
  *
- * 流程：
- *   1. mark  — 所有 root 标 GRAY 入队，逐个取出标 BLACK，
- *              调用 trace 回调遍历子对象，WHITE→GRAY 入队
- *   2. sweep — 遍历对象链表，WHITE 且可回收的释放，
- *              BLACK→WHITE 重置
+ * Flow:
+ *   1. mark  — all roots are marked GRAY and enqueued; pop each, mark BLACK,
+ *              call the trace callback to walk children, WHITE→GRAY enqueue
+ *   2. sweep — walk the object list, free collectable WHITE objects,
+ *              reset BLACK→WHITE
  */
 
-/* 回收上下文：collect 时由 engine 填充传入 */
+/* collection context: filled in by the engine and passed to collect */
 typedef struct {
-    Re0GcObject   **head;        /* 对象链表头（sweep 会修改链表） */
-    Re0GcRootSet   *roots;       /* 根集 */
-    Re0GcStats     *stats;       /* 统计输出 */
-    Re0GcListeners *listeners;   /* 事件监听（可为 NULL） */
-    Re0GcMode       mode;        /* 引擎模式（事件用） */
-    Re0GcAlgo       algo;        /* 引擎算法（事件用） */
+    Re0GcObject   **head;        /* object list head (sweep mutates the list) */
+    Re0GcRootSet   *roots;       /* root set */
+    Re0GcStats     *stats;       /* stats output */
+    Re0GcListeners *listeners;   /* event listeners (may be NULL) */
+    Re0GcMode       mode;        /* engine mode (for events) */
+    Re0GcAlgo       algo;        /* engine algorithm (for events) */
 } Re0GcTracingCtx;
 
-/* 执行完整的 mark-sweep 回收 */
+/* run a full mark-sweep collection */
 void re0_gc_tracing_collect(Re0GcTracingCtx *ctx);
 
-/* 仅执行 mark 阶段（并发模式预留：可独立调用） */
-/* 执行 mark 阶段。返回 true 表示 mark-stack OOM——
- * 调用方必须放弃本次 sweep，否则会误回收未被标记的可达对象。 */
+/* run only the mark phase (reserved for concurrent mode: callable standalone)
+ * Returns true on mark-stack OOM — the caller must abandon this sweep,
+ * otherwise unmarked-but-reachable objects would be reclaimed. */
 bool re0_gc_tracing_mark(Re0GcRootSet *roots, Re0GcListeners *ls);
 
-/* 仅执行 sweep 阶段（并发模式预留） */
+/* run only the sweep phase (reserved for concurrent mode) */
 int  re0_gc_tracing_sweep(Re0GcObject **head, Re0GcStats *stats);
 
-/* 将链表中所有对象重置为 WHITE（新一轮 mark 前调用） */
+/* reset every object in the list to WHITE (before a new mark cycle) */
 void re0_gc_tracing_reset_colors(Re0GcObject *head);
 
 #endif

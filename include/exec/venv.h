@@ -1,15 +1,15 @@
 /*
- * venv.h — RingEcho 虚拟环境管理
+ * venv.h — RingEcho virtual environment management
  *
- * 类似 Python venv：创建隔离的项目环境
+ * Similar to Python venv: create an isolated project environment
  *
  * .renv/
  *   lib/
- *     std/           标准库（随 rem 安装）
- *     packages/      第三方包
+ *     std/           standard library (installed with rem)
+ *     packages/      third-party packages
  *   bin/
  *     rem            rem wrapper
- *   reo.toml         环境锁文件
+ *   reo.toml         environment lock file
  */
 #ifndef RE0_VENV_H
 #define RE0_VENV_H
@@ -27,28 +27,28 @@
 #define RE0_GLOBAL_LIB_DIR ".re/lib"
 #define RE0_STD_MODULES_COUNT 4
 
-/* 标准库模块列表 */
+/* standard library module list */
 __attribute__((unused)) static const char *RE0_STD_MODULES[RE0_STD_MODULES_COUNT] = {
     "io", "string", "math", "vec"
 };
 
-/* 创建虚拟环境 */
+/* create a virtual environment */
 bool reo_venv_create(const char *project_dir);
 
-/* 检测当前是否在虚拟环境中（向上查找 .renv/） */
+/* detect whether currently inside a virtual environment (search upward for .renv/) */
 bool reo_venv_detect(char *out_env_dir, size_t cap);
 
-/* 解析 import 路径（多级 fallback）
- * 返回 true 表示找到文件，path 写入完整路径 */
+/* resolve import path (multi-level fallback)
+ * returns true if the file is found; full path written to out_path */
 bool reo_venv_resolve_import(const char *module_name,
                               const char *project_dir,
                               const char *env_dir,
                               char *out_path, size_t cap);
 
-/* 安装标准库到虚拟环境 */
+/* install the standard library into the virtual environment */
 bool reo_venv_install_std(const char *env_dir);
 
-/* 输出 shell 激活脚本 */
+/* print the shell activation script */
 void reo_venv_print_activate(const char *env_dir);
 
 #endif

@@ -69,23 +69,23 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
                 (const char*[]){"p"}, (const char*[]){"ptr"}, 1);
     add_builtin(r, "gc_remove_root", "unit",
                 (const char*[]){"p"}, (const char*[]){"ptr"}, 1);
-    /* svec: 字符串向量（char** 内部，Aire 前置） */
+    /* svec: string vector (char** internally, Aire prefix) */
     add_builtin(r, "svec_new", "i64", NULL, NULL, 0);
     add_builtin(r, "svec_push", "unit",
                 (const char*[]){"v","s"}, (const char*[]){"i64","str"}, 2);
     add_builtin(r, "svec_get", "str", si_s, si_t, 2);
     add_builtin(r, "svec_len", "i64", str_s, str_t, 1);
     add_builtin(r, "svec_free", "unit", str_s, str_t, 1);
-    /* dir: 目录遍历（dirent 跨平台） */
+    /* dir: directory traversal (dirent, cross-platform) */
     add_builtin(r, "dir_open", "i64", str_s, str_t, 1);
     add_builtin(r, "dir_next", "str", str_s, str_t, 1);
     add_builtin(r, "dir_close", "unit", str_s, str_t, 1);
-    /* path: 路径操作 */
+    /* path: path operations */
     add_builtin(r, "path_join", "str", ab_s, ab_t, 2);
     add_builtin(r, "path_ext", "str", str_s, str_t, 1);
     add_builtin(r, "path_base", "str", str_s, str_t, 1);
     add_builtin(r, "path_isdir", "bool", str_s, str_t, 1);
-    /* proc: 子进程 */
+    /* proc: subprocess */
     add_builtin(r, "proc_run", "i32", str_s, str_t, 1);
 }
 

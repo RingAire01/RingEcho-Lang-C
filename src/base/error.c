@@ -60,9 +60,10 @@ void re0_error_list_print(Re0ErrorList *l) {
 void re0_error_list_free(Re0ErrorList *l) {
     for (size_t i = 0; i < Re0ErrorVec_len(&l->errors); i++) {
         free(l->errors.data[i].msg);
-        /* 注意：file 字段通常指向字符串常量或由调用者管理，不在此处释放。
-         * 如果 file 是动态分配的，调用者应先释放或修改 re0_error_append 复制 file */
-        /* free((void*)l->errors.data[i].file); */  /* 如果需要释放 file，取消注释此行 */
+        /* note: the file field usually points to a string literal or is caller-managed; not freed here.
+         * If file is dynamically allocated, the caller should free it first,
+         * or modify re0_error_append to copy file */
+        /* free((void*)l->errors.data[i].file); */  /* uncomment this line if file needs freeing */
     }
     Re0ErrorVec_free(&l->errors);
 }

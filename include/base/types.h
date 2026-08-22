@@ -40,8 +40,9 @@ bool        re0_type_is_float(Re0TypeKind k);
 bool        re0_type_is_numeric(Re0TypeKind k);
 bool        re0_type_is_signed(Re0TypeKind k);
 size_t      re0_type_sizeof(Re0TypeKind k);
-/* 递归计算完整类型尺寸（复合类型：Array=elem×n、Slice=16、Vec=24、Tuple=Σ）。
- * Struct/Enum/Fn/Generic 需 model 布局信息，保守返回 0。 */
+/* Recursively compute the full type size (composite types: Array=elem×n, Slice=16,
+ * Vec=24, Tuple=Σ). Struct/Enum/Fn/Generic need model layout info; conservatively
+ * return 0. */
 size_t      re0_type_sizeof_full(const Re0Type *t);
 Re0Type    *re0_type_make(Re0TypeKind k, void *arena);
 Re0Type    *re0_type_make_array(Re0Type *inner, size_t n, void *arena);
@@ -59,15 +60,15 @@ Re0Type    *re0_type_make_typevar(const char *name, void *arena);
 
 Re0Type    *re0_type_parse(const char *s);
 
-/* ── 结构化类型比较 ──
- * 递归比较两个类型的结构。
- * NULL == NULL → true；任一为 NULL → false。
- * STRUCT/ENUM 按 name 比较；GENERIC 按 name + args 比较；余按结构递归。
+/* ── structural type comparison ──
+ * Recursively compare the structure of two types.
+ * NULL == NULL → true; either NULL → false.
+ * STRUCT/ENUM compared by name; GENERIC by name + args; the rest recursively by structure.
  */
 bool        re0_type_equal(const Re0Type *a, const Re0Type *b);
 
-/* 类型是否可互相赋值（from → to）。
- * 目前：equal 或 numeric 隐式转换。
+/* Whether types are mutually assignable (from → to).
+ * Currently: equal, or numeric implicit conversion.
  */
 bool        re0_type_coercible(const Re0Type *from, const Re0Type *to);
 

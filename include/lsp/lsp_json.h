@@ -1,5 +1,5 @@
 /*
- * lsp_json.h — 精简 JSON 解析器（仅供 LSP 使用）
+ * lsp_json.h — minimal JSON parser (LSP only)
  */
 #ifndef RE0_LSP_JSON_H
 #define RE0_LSP_JSON_H
@@ -20,16 +20,16 @@ typedef struct JVal {
     };
 } JVal;
 
-/* 解析 JSON 字符串，返回根值（失败返回 NULL） */
+/* parse a JSON string, return the root value (NULL on failure) */
 JVal *json_parse(const char *text, size_t len);
 
-/* 释放 JSON 值树 */
+/* free a JSON value tree */
 void json_free(JVal *v);
 
-/* 从对象中按键查找（不存在返回 NULL） */
+/* look up a key in an object (returns NULL if absent) */
 JVal *json_get(JVal *obj, const char *key);
 
-/* 获取字符串/数字值（类型不匹配返回默认值） */
+/* get string/number value (returns fallback on type mismatch) */
 const char *json_str(JVal *v, const char *fallback);
 double json_num_val(JVal *v, double fallback);
 

@@ -1,14 +1,14 @@
 /*
  * rem_main.c — RingEcho Module Manager (rem)
  *
- * 类似 npm：包管理工具
- *   rem init [name]              初始化项目
- *   rem install <pkg>            安装包
- *   rem list                     列出已安装包
- *   rem remove <pkg>             移除包
- *   rem update                   更新依赖
- *   rem search <query>           搜索包
- *   rem publish                  发布包
+ * npm-like package manager
+ *   rem init [name]              initialize a project
+ *   rem install <pkg>            install a package
+ *   rem list                     list installed packages
+ *   rem remove <pkg>             remove a package
+ *   rem update                   update dependencies
+ *   rem search <query>           search packages
+ *   rem publish                  publish a package
  */
 
 #include "base/safe.h"

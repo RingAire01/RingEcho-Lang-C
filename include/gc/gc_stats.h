@@ -4,23 +4,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ── GC 统计信息 ──
- * 记录引擎运行期间的累计数据，供 verbose 输出和外部查询使用。
+/* ── GC statistics ──
+ * Cumulative data recorded over the engine's lifetime, for verbose
+ * output and external queries.
  */
 typedef struct {
-    /* 当前快照 */
-    int    alive_count;       /* 存活对象数 */
-    size_t alive_bytes;       /* 存活对象总字节 */
+    /* current snapshot */
+    int    alive_count;       /* live objects */
+    size_t alive_bytes;       /* live bytes */
 
-    /* 累计统计 */
-    int    total_alloc;       /* 累计分配次数 */
-    size_t total_alloc_bytes; /* 累计分配字节 */
-    int    total_freed;       /* 累计释放次数 */
-    size_t total_freed_bytes; /* 累计释放字节 */
-    int    collect_count;     /* 累计回收轮次 */
-    uint64_t total_pause_ns;  /* 累计 STW 暂停时间（纳秒） */
+    /* cumulative totals */
+    int    total_alloc;       /* total allocations */
+    size_t total_alloc_bytes; /* total bytes allocated */
+    int    total_freed;       /* total frees */
+    size_t total_freed_bytes; /* total bytes freed */
+    int    collect_count;     /* total collection cycles */
+    uint64_t total_pause_ns;  /* total STW pause time (ns) */
 
-    /* 上一次回收的详情 */
+    /* last collection details */
     int    last_freed_count;
     size_t last_freed_bytes;
     uint64_t last_pause_ns;
@@ -28,13 +29,13 @@ typedef struct {
 
 void re0_gc_stats_reset(Re0GcStats *s);
 
-/* 分配后调用：增加存活计数 */
+/* call after allocation: bump live counters */
 void re0_gc_stats_on_alloc(Re0GcStats *s, size_t bytes);
 
-/* 释放后调用：减少存活计数 */
+/* call after free: decrement live counters */
 void re0_gc_stats_on_free(Re0GcStats *s, size_t bytes);
 
-/* 回收轮次结束调用：记录暂停时间和释放量 */
+/* call at the end of a collection cycle: record pause and freed amount */
 void re0_gc_stats_on_collect(Re0GcStats *s, int freed_count,
                               size_t freed_bytes, uint64_t pause_ns);
 

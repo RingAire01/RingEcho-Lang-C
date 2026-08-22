@@ -1,7 +1,7 @@
 /*
- * toml_config.h — ringecho.toml 项目配置解析
+ * toml_config.h — ringecho.toml project configuration parsing
  *
- * 格式：
+ * Format:
  * [package]
  * name = "myapp"
  * version = "0.1.0"
@@ -38,16 +38,16 @@ typedef struct {
     bool valid;
 } ReoTomlConfig;
 
-/* 默认配置（fallback） */
+/* default configuration (fallback) */
 ReoTomlConfig reo_toml_default(void);
 
-/* 从文件解析 ringecho.toml，失败返回默认配置 */
+/* parse ringecho.toml from file; returns default config on failure */
 ReoTomlConfig reo_toml_load(const char *path);
 
-/* 查找项目根目录（向上查找 ringecho.toml） */
+/* find project root directory (search upward for ringecho.toml) */
 bool reo_toml_find_root(char *out_dir, size_t cap);
 
-/* 写入默认 ringecho.toml */
+/* write default ringecho.toml */
 bool reo_toml_write_default(const char *dir, const char *name);
 
 #endif

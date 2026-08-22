@@ -4,49 +4,49 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-/* ── GC 模式：控制「何时」触发回收 ── */
+/* ── GC mode: controls "when" collection runs ── */
 typedef enum {
-    RE0_GC_MODE_NONE = 0,    /* 无 GC：堆对象仅手动 free，引擎不自动回收 */
-    RE0_GC_MODE_AUTO,        /* 系统 GC：分配量超阈值时自动 mark-sweep */
-    RE0_GC_MODE_MANUAL,      /* 开发者 GC：仅 gc_collect() API 显式触发 */
+    RE0_GC_MODE_NONE = 0,    /* no GC: heap objects freed manually only, engine never auto-collects */
+    RE0_GC_MODE_AUTO,        /* system GC: auto mark-sweep when allocations exceed the threshold */
+    RE0_GC_MODE_MANUAL,      /* developer GC: only triggered explicitly via gc_collect() */
 } Re0GcMode;
 
-/* ── GC 算法：控制「如何」回收 ── */
+/* ── GC algorithm: controls "how" collection runs ── */
 typedef enum {
-    RE0_GC_ALGO_TRACING = 0,   /* 纯 mark-sweep，从 roots 遍历对象图 */
-    RE0_GC_ALGO_ARC_CYCLE,     /* 引用计数 + 循环引用检测 */
-    RE0_GC_ALGO_HYBRID,        /* 混合：OWNED 即时释放，GC 对象走 tracing */
+    RE0_GC_ALGO_TRACING = 0,   /* pure mark-sweep, walk the object graph from roots */
+    RE0_GC_ALGO_ARC_CYCLE,     /* reference counting + cycle detection */
+    RE0_GC_ALGO_HYBRID,        /* hybrid: OWNED released instantly, GC objects traced */
 } Re0GcAlgo;
 
-/* ── 指针语义类别 ── */
+/* ── pointer semantics kinds ── */
 typedef enum {
-    RE0_PTR_KIND_NULLABLE = 0,  /* 可空：允许指向 NULL */
-    RE0_PTR_KIND_NONNULL,       /* 非空：保证非 NULL */
-    RE0_PTR_KIND_OWNED,         /* 所有权：持有者负责释放 */
-    RE0_PTR_KIND_BORROWED,      /* 借用：不拥有，不释放 */
-    RE0_PTR_KIND_WEAK,          /* 弱引用：不阻止回收 */
+    RE0_PTR_KIND_NULLABLE = 0,  /* nullable: may point to NULL */
+    RE0_PTR_KIND_NONNULL,       /* non-null: guaranteed non-NULL */
+    RE0_PTR_KIND_OWNED,         /* ownership: holder is responsible for freeing */
+    RE0_PTR_KIND_BORROWED,      /* borrow: does not own, never frees */
+    RE0_PTR_KIND_WEAK,          /* weak reference: does not prevent collection */
 } Re0PtrKind;
 
-/* ── 三色标记位 ── */
+/* ── tri-color marking bits ── */
 enum {
-    RE0_GC_COLOR_WHITE = 0,  /* 未访问（可回收） */
-    RE0_GC_COLOR_GRAY  = 1,  /* 已入队待遍历子节点 */
-    RE0_GC_COLOR_BLACK = 2,  /* 已标记存活，子节点已遍历 */
+    RE0_GC_COLOR_WHITE = 0,  /* not visited (collectable) */
+    RE0_GC_COLOR_GRAY  = 1,  /* enqueued, children not yet walked */
+    RE0_GC_COLOR_BLACK = 2,  /* marked live, children walked */
 };
 
-/* ── 默认参数 ── */
+/* ── default parameters ── */
 #define RE0_GC_DEFAULT_THRESHOLD  1024
-#define RE0_GC_DEFAULT_FACTOR     2.0f   /* 下次阈值 = 存活量 * factor */
+#define RE0_GC_DEFAULT_FACTOR     2.0f   /* next threshold = survivors * factor */
 #define RE0_GC_ROOT_CAP_INIT      16
 #define RE0_GC_MARK_STACK_INIT    64
 
-/* ── 运行时配置 ── */
+/* ── runtime configuration ── */
 typedef struct {
     Re0GcMode mode;
     Re0GcAlgo algo;
-    int       threshold;    /* AUTO 触发阈值（分配计数） */
-    float     gc_factor;    /* 回收后阈值放大因子 */
-    bool      verbose;      /* 是否打印 GC 事件到 stderr */
+    int       threshold;    /* AUTO trigger threshold (allocation count) */
+    float     gc_factor;    /* post-collection threshold growth factor */
+    bool      verbose;      /* print GC events to stderr */
 } Re0GcConfig;
 
 static inline Re0GcConfig re0_gc_config_default(void) {

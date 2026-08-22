@@ -77,37 +77,37 @@ static void clear_var_types(void) {
 }
 
 /* ════════════════════════════════════════════════════
- *  泛型函数单态化基础设施
+ *  generic function monomorphization infrastructure
  * ════════════════════════════════════════════════════ */
 
-/* 前向声明 */
+/* forward declarations */
 static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size);
 static const char *reo_type_to_c(const char *t);
 static int c_gen_expr(Re0Codegen *c, Re0Expr *e);
 
-/* 函数返回类型追踪（供 infer_expr_c_type 使用） */
+/* function return type tracking (used by infer_expr_c_type) */
 #define MAX_FN_RETS RE0_MAX_FN_RETS
 typedef struct { char name[128]; char ret_c_type[128]; } FnRetSlot;
 static FnRetSlot g_fn_rets[MAX_FN_RETS];
 static int g_fn_ret_count = 0;
 
-/* struct 字段类型追踪（供 infer_expr_c_type 推断 a.field 的类型） */
+/* struct field type tracking (used by infer_expr_c_type to infer a.field type) */
 #define MAX_STRUCT_FIELDS 512
 typedef struct { char struct_name[64]; char field[64]; char c_type[128]; } StructFieldSlot;
 static StructFieldSlot g_struct_fields[MAX_STRUCT_FIELDS];
 static int g_struct_field_count = 0;
 
-/* Lambda 存储与计数 */
+/* lambda storage and counting */
 #define MAX_LAMBDAS RE0_MAX_LAMBDAS
 typedef struct { char name[64]; Re0Expr *lambda; } LambdaSlot;
 static LambdaSlot g_lambdas[MAX_LAMBDAS];
 static int g_lambda_count = 0;
 static int g_lambda_counter = 0;
 
-/* 泛型 struct 存储 */
+/* generic struct storage */
 #define MAX_GENERIC_STRUCTS RE0_MAX_GENERIC_STRUCTS
 #define MAX_INSTANTIATED RE0_MAX_INSTANTIATED
-static size_t g_fwd_insert_pos = 0;  /* c_begin 结束后 prelude 的长度 */
+static size_t g_fwd_insert_pos = 0;  /* length of prelude after c_begin finishes */
 typedef struct { const char *name; Re0Stmt *def; } GenericStructSlot;
 static GenericStructSlot g_generic_structs[MAX_GENERIC_STRUCTS];
 static int g_generic_struct_count = 0;
@@ -127,7 +127,7 @@ static Re0Stmt *find_generic_struct(const char *name) {
     return NULL;
 }
 
-/* 已实例化的 struct mangled 名集合 */
+/* set of instantiated struct mangled names */
 static char g_struct_instances[MAX_INSTANTIATED][256];
 static int g_struct_instance_count = 0;
 
@@ -137,7 +137,7 @@ static bool struct_already_instantiated(const char *mangled) {
     return false;
 }
 
-/* 实例化泛型 struct：记录 pending（typedef 在 c_end 中生成） */
+/* instantiate generic struct: record pending (typedef generated in c_end) */
 static const char *instantiate_generic_struct(Re0Codegen *c, const char *base_name,
                                                const char *type_arg,
                                                char *out, size_t out_sz) {
@@ -152,24 +152,24 @@ static const char *instantiate_generic_struct(Re0Codegen *c, const char *base_na
     return out;
 }
 
-/* 在 c_end 中调用：生成所有泛型 struct typedef */
+/* called in c_end: generate all generic struct typedefs */
 static void flush_generic_structs(Re0Codegen *c) {
     if (g_struct_instance_count == 0) return;
     (void)c;
 
-    /* 构建所有 typedef 并插入到 prelude 之后 */
+    /* build all typedefs and insert after the prelude */
     Re0Buffer decls;
     re0_buffer_init(&decls);
     for (int i = 0; i < g_struct_instance_count; i++) {
         const char *mangled = g_struct_instances[i];
-        /* 提取 base_name: Pair_int64_t → Pair */
+        /* extract base_name: Pair_int64_t → Pair */
         char base_name[128];
         strncpy(base_name, mangled, sizeof(base_name) - 1);
         base_name[sizeof(base_name)-1] = '\0';
         char *last_under = NULL; (void)last_under;
         char *p = base_name;
         while (*p) { if (*p == '_') last_under = p; p++; }
-        /* 找到 base_name 中最后一个匹配的 generic struct */
+        /* find the last matching generic struct within base_name */
         (void)0;
         for (int j = 0; j < g_generic_struct_count; j++) {
             size_t nlen = strlen(g_generic_structs[j].name);
@@ -212,14 +212,14 @@ static void flush_generic_structs(Re0Codegen *c) {
     g_struct_instance_count = 0;
 }
 
-/* 在 StructInit 处检测泛型并实例化，返回 mangled 名 */
+/* detect generics at StructInit and instantiate, return mangled name */
 static const char *try_instantiate_generic_struct_init(Re0Codegen *c, Re0Expr *e,
                                                         char *out, size_t out_sz) {
     if (e->kind != EXPR_STRUCT_INIT) return NULL;
     const char *name = e->struct_init.name;
     if (!find_generic_struct(name)) return NULL;
 
-    /* 从第一个 field 值推断类型 */
+    /* infer type from the first field value */
     if (e->struct_init.field_count > 0) {
         char inferred[128];
         if (infer_expr_c_type(e->struct_init.fields[0].value, inferred, sizeof(inferred)))
@@ -278,7 +278,7 @@ typedef struct { char name[256]; } InstantiatedSlot;
 static InstantiatedSlot g_instantiated[MAX_INSTANTIATED];
 static int g_instantiated_count = 0;
 
-/* 待实例化条目：延迟到 c_end 生成完整函数体 */
+/* pending instantiation entry: full function body generated later in c_end */
 typedef struct {
     Re0Stmt *def;
     char type_args[8][64];
@@ -315,7 +315,7 @@ static void mark_instantiated(const char *mangled) {
     g_instantiated_count++;
 }
 
-/* 类型替换：在 type_params 中查找 orig，找到则返回 args[i] */
+/* type substitution: look up orig in type_params, return args[i] if found */
 static const char *substitute_one(const char *orig,
                                    char **params, char **args, int n) {
     if (!orig) return NULL;
@@ -324,10 +324,10 @@ static const char *substitute_one(const char *orig,
     return orig;
 }
 
-/* 前向声明 */
+/* forward declaration */
 static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth);
 
-/* 实例化泛型函数：记录 pending + 输出前置声明 */
+/* instantiate generic function: record pending + emit forward declaration */
 static void instantiate_generic_fn(Re0Codegen *c, Re0Stmt *def,
                                     char **type_args, int type_arg_count) {
     (void)c;
@@ -335,7 +335,7 @@ static void instantiate_generic_fn(Re0Codegen *c, Re0Stmt *def,
     int tp_count = def->function.type_param_count;
     if (tp_count == 0 || type_arg_count == 0) return;
 
-    /* 计算 mangled 名 */
+    /* compute mangled name */
     char mangled[256];
     snprintf(mangled, sizeof(mangled), "%s", def->function.name);
     for (int i = 0; i < type_arg_count && i < tp_count; i++) {
@@ -345,7 +345,7 @@ static void instantiate_generic_fn(Re0Codegen *c, Re0Stmt *def,
     if (is_already_instantiated(mangled)) return;
     mark_instantiated(mangled);
 
-    /* 记录 pending（供 c_end 生成前置声明 + 完整函数体） */
+    /* record pending (for c_end to emit forward declaration + full body) */
     if (g_pending_count < MAX_INSTANTIATED) {
         PendingInst *pi = &g_pending_list[g_pending_count++];
         pi->def = def;
@@ -356,11 +356,11 @@ static void instantiate_generic_fn(Re0Codegen *c, Re0Stmt *def,
     }
 }
 
-/* 在 c_end 中调用：前置声明 + 生成所有 pending 泛型函数体 */
+/* called in c_end: forward declarations + generate all pending generic function bodies */
 static void flush_pending_instantiations(Re0Codegen *c) {
     if (g_pending_count == 0) return;
 
-    /* 1. 构建前置声明文本 */
+    /* 1. build forward declaration text */
     Re0Buffer decls;
     re0_buffer_init(&decls);
     for (int idx = 0; idx < g_pending_count; idx++) {
@@ -384,7 +384,7 @@ static void flush_pending_instantiations(Re0Codegen *c) {
         re0_buffer_write_str(&decls, ");\n");
     }
 
-    /* 2. 在 prelude 之后、用户代码之前插入前置声明 */
+    /* 2. insert forward declarations after the prelude, before user code */
     if (decls.len > 0 && g_fwd_insert_pos <= c->output.len) {
         size_t tail_len = c->output.len - g_fwd_insert_pos;
         char *tail = (char*)xmalloc(tail_len > 0 ? tail_len : 1);
@@ -398,7 +398,7 @@ static void flush_pending_instantiations(Re0Codegen *c) {
     }
     re0_buffer_free(&decls);
 
-    /* 3. 生成完整函数体 */
+    /* 3. generate full function bodies */
     for (int idx = 0; idx < g_pending_count; idx++) {
         PendingInst *pi = &g_pending_list[idx];
         Re0Stmt *def = pi->def;
@@ -434,12 +434,12 @@ static void flush_pending_instantiations(Re0Codegen *c) {
     g_pending_count = 0;
 }
 
-/* 在 c_end 中调用：前置声明 + 生成所有 lambda 函数体 */
+/* called in c_end: forward declarations + generate all lambda function bodies */
 static void flush_lambdas(Re0Codegen *c) {
     if (g_lambda_count == 0) return;
     Re0Buffer *b = &c->output;
 
-    /* 1. 构建前置声明并插入到 prelude 之后 */
+    /* 1. build forward declarations and insert after the prelude */
     Re0Buffer decls;
     re0_buffer_init(&decls);
     for (int i = 0; i < g_lambda_count; i++) {
@@ -462,7 +462,7 @@ static void flush_lambdas(Re0Codegen *c) {
     }
     re0_buffer_free(&decls);
 
-    /* 2. 生成函数体 */
+    /* 2. generate function bodies */
     for (int i = 0; i < g_lambda_count; i++) {
         Re0Expr *lam = g_lambdas[i].lambda;
         re0_buffer_write_fmt(b, "int64_t %s(int64_t __env", g_lambdas[i].name);
@@ -475,14 +475,14 @@ static void flush_lambdas(Re0Codegen *c) {
     g_lambda_count = 0;
 }
 
-/* 在 CALL 处检测泛型调用并触发实例化，返回 mangled 名（NULL=非泛型） */
+/* detect generic call at CALL and trigger instantiation, return mangled name (NULL=not generic) */
 static const char *try_instantiate_generic_call(Re0Codegen *c, const char *fn_name,
                                                  Re0Expr **args, int arg_count,
                                                  char *out, size_t out_sz) {
     Re0Stmt *def = find_generic_fn(fn_name);
     if (!def) return NULL;
 
-    /* 从第一个参数推断类型（MVP: 单类型参数，取首参类型） */
+    /* infer type from the first argument (MVP: single type param, use first arg's type) */
     if (def->function.type_param_count == 1 && arg_count > 0) {
         char inferred_type[128];
         if (!infer_expr_c_type(args[0], inferred_type, sizeof(inferred_type)))
@@ -507,15 +507,15 @@ static const char *reo_type_to_c(const char *t) {
     {
         const char *p = t;
         while (*p == ' ' || *p == '\t') p++;
-        if (*p == '[') return "int64_t*";   /* [T; N] / [T] → 装箱数组/切片指针 */
-        if (*p == '&') return "int64_t";    /* &T / &mut T → 装箱引用 */
-        if (*p == '*') return "void*";      /* *T → 裸指针 */
+        if (*p == '[') return "int64_t*";   /* [T; N] / [T] → boxed array/slice pointer */
+        if (*p == '&') return "int64_t";    /* &T / &mut T → boxed reference */
+        if (*p == '*') return "void*";      /* *T → raw pointer */
         if (strncmp(p, "Vec", 3) == 0) {
             const char *q = p + 3;
             while (*q == ' ' || *q == '\t') q++;
-            if (*q == '<') return "__reo_vec_t*";   /* Vec<T> → vec 运行时指针 */
+            if (*q == '<') return "__reo_vec_t*";   /* Vec<T> → vec runtime pointer */
         }
-        if (strchr(p, '<')) return "int64_t";        /* 其他泛型 Name<...> → 装箱指针 */
+        if (strchr(p, '<')) return "int64_t";        /* other generic Name<...> → boxed pointer */
     }
     if (strcmp(t, "i8") == 0)    return "int8_t";
     if (strcmp(t, "i16") == 0)   return "int16_t";
@@ -559,14 +559,14 @@ static bool expr_is_string(Re0Expr *e) {
         e->call.callee->kind == EXPR_IDENT &&
         builtin_returns_string(e->call.callee->ident.name))
         return true;
-    /* 字符串拼接: str + str 结果为 str */
+    /* string concatenation: str + str yields str */
     if (e->kind == EXPR_BINARY && e->binary.op == BINOP_ADD &&
         (expr_is_string(e->binary.left) || expr_is_string(e->binary.right)))
         return true;
     return false;
 }
 
-/* 表达式是否为 vec（__reo_vec_t*）：用于 for-in Vec 迭代 */
+/* whether expression is a vec (__reo_vec_t*): used for for-in Vec iteration */
 static bool expr_is_vec(Re0Expr *e) {
     if (!e) return false;
     if (e->kind == EXPR_IDENT) {
@@ -580,7 +580,7 @@ static bool expr_is_vec(Re0Expr *e) {
     return false;
 }
 
-/* 对象表达式是否为指针类型（如方法 self）：字段访问需用 -> */
+/* whether object expression is pointer-typed (e.g. method self): field access must use -> */
 static bool expr_is_pointer_obj(Re0Expr *e) {
     if (!e || e->kind != EXPR_IDENT) return false;
     const char *t = var_c_type(e->ident.name);
@@ -649,12 +649,12 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
                 else if (builtin_returns_svec(fn)) known = "__reo_svec_t*";
                 else if (builtin_returns_float(fn)) known = "double";
                 else {
-                    /* 查用户函数返回类型 */
+                    /* look up user function return type */
                     const char *ret = fn_ret_c_type(fn);
                     if (ret) known = ret;
                 }
             }
-            /* 枚举构造器 */
+            /* enum constructor */
             if (!known && e->call.callee && e->call.callee->kind == EXPR_IDENT &&
                 strchr(e->call.callee->ident.name, ':')) {
                 char ename[128];
@@ -678,7 +678,7 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             known = reo_type_to_c(e->cast.target_type);
             break;
         case EXPR_SELECT: {
-            /* a.field: 推断 a 的 struct 类型,再查 field 的 C 类型 */
+            /* a.field: infer a's struct type, then look up field's C type */
             char obj_type[128];
             if (infer_expr_c_type(e->select.object, obj_type, sizeof(obj_type))) {
                 const char *ft = struct_field_c_type(obj_type, e->select.field);
@@ -687,7 +687,7 @@ static bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             break;
         }
         case EXPR_BINARY: {
-            /* 字符串拼接结果为 const char*;其余二元的类型按操作数或默认 */
+            /* string concatenation yields const char*; other binary types follow operands or default */
             if (e->binary.op == BINOP_ADD &&
                 (expr_is_string(e->binary.left) || expr_is_string(e->binary.right)))
                 known = "const char*";
@@ -754,7 +754,7 @@ static bool split_qualified(const char *name, char *enum_name, int elen,
     return true;
 }
 
-/* 安全输出 C char 字面量，正确转义特殊字符 */
+/* safely emit C char literal, escaping special characters correctly */
 static void c_write_char_literal(Re0Buffer *b, char c) {
     re0_buffer_write_str(b, "'");
     switch (c) {
@@ -799,7 +799,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
         case EXPR_UNIT: re0_buffer_write_str(b, "0"); break;
         case EXPR_BINARY: {
             Re0BinOpKind op = e->binary.op;
-            /* 常量折叠：两侧都是整数字面量时编译期计算 */
+            /* constant folding: compute at compile time when both sides are integer literals */
             if (e->binary.left->kind == EXPR_INT && e->binary.right->kind == EXPR_INT) {
                 int64_t l = e->binary.left->int_lit.val;
                 int64_t r = e->binary.right->int_lit.val;
@@ -850,8 +850,8 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 re0_buffer_write_char(b, ')');
                 break;
             }
-            /* 字符串拼接: str + str -> __reo_str_concat（任一操作数为 str 即视为拼接，
-               sema 已保证 str 不会与数值做 + ） */
+            /* string concatenation: str + str -> __reo_str_concat (either operand being str
+               counts as concatenation; sema guarantees str is never added to a numeric) */
             if (op == BINOP_ADD &&
                 (expr_is_string(e->binary.left) || expr_is_string(e->binary.right))) {
                 re0_buffer_write_str(b, "__reo_str_concat(");
@@ -890,7 +890,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             break;
         }
         case EXPR_CALL: {
-            /* 方法糖: x.len() → str_len(x) 或 vec_len(x) */
+            /* method sugar: x.len() → str_len(x) or vec_len(x) */
             if (e->call.callee->kind == EXPR_SELECT &&
                 strcmp(e->call.callee->select.field, "len") == 0) {
                 Re0Expr *obj = e->call.callee->select.object;
@@ -906,7 +906,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                     break;
                 }
             }
-            /* 方法调用: obj.method(args) → MangledSymbol(obj, args...) */
+            /* method call: obj.method(args) → MangledSymbol(obj, args...) */
             if (e->call.callee->kind == EXPR_SELECT) {
                 Re0Expr *sel = e->call.callee;
                 Re0Expr *obj = sel->select.object;
@@ -918,7 +918,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                         c->model, sn, sel->select.field);
                     if (mangled) {
                         re0_buffer_write_str(b, mangled);
-                        re0_buffer_write_str(b, "(&(");   /* self 传指针 */
+                        re0_buffer_write_str(b, "(&(");   /* pass self by pointer */
                         c_gen_expr(c, obj);
                         re0_buffer_write_char(b, ')');
                         for (int i = 0; i < e->call.arg_count; i++) {
@@ -930,7 +930,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                     }
                 }
             }
-            /* 枚举构造器: Enum::Variant(args) */
+            /* enum constructor: Enum::Variant(args) */
             if (e->call.callee->kind == EXPR_IDENT &&
                 strchr(e->call.callee->ident.name, ':')) {
                 char ename[128], vname[128];
@@ -1044,7 +1044,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 if (strcmp(fn, "gc_stats") == 0)      { re0_buffer_write_str(b, "__reo_gc_stats()"); break; }
                 if (strcmp(fn, "gc_add_root") == 0)   { re0_buffer_write_str(b, "(__reo_gc_add_root((void*)(int64_t)"); goto gen1; }
                 if (strcmp(fn, "gc_remove_root") == 0){ re0_buffer_write_str(b, "(__reo_gc_remove_root((void*)(int64_t)"); goto gen1; }
-                /* spawn/await 并发运行时 */
+                /* spawn/await concurrency runtime */
                 if (strcmp(fn, "__reo_spawn") == 0 && e->call.arg_count >= 1) {
                     /* spawn f() → __reo_rt_spawn(&f) */
                     re0_buffer_write_str(b, "__reo_rt_spawn(&");
@@ -1061,7 +1061,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                     re0_buffer_write_fmt(b, "), &__ab%d, sizeof(int64_t)); __ab%d; })", t, t);
                     break;
                 }
-                /* svec builtins（字符串向量） */
+                /* svec builtins (string vector) */
                 if (strcmp(fn, "svec_new") == 0)  { re0_buffer_write_str(b, "__reo_svec_new()"); break; }
                 if (strcmp(fn, "svec_len") == 0)  { re0_buffer_write_str(b, "__reo_svec_len((__reo_svec_t*)"); goto gen1v; }
                 if (strcmp(fn, "svec_free") == 0) { re0_buffer_write_str(b, "__reo_svec_free((__reo_svec_t*)"); goto gen1v; }
@@ -1075,11 +1075,11 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 if (strcmp(fn, "svec_push") == 0) {
                     re0_buffer_write_str(b, "__reo_svec_push((__reo_svec_t*)");
                     if (e->call.arg_count > 0) c_gen_expr(c, e->call.args[0]); else re0_buffer_write_str(b, "0");
-                    re0_buffer_write_str(b, ", ");  /* str 参数原样传 char*，不做 int64 cast */
+                    re0_buffer_write_str(b, ", ");  /* str arg passed as char* as-is, no int64 cast */
                     if (e->call.arg_count > 1) c_gen_expr(c, e->call.args[1]); else re0_buffer_write_str(b, "\"\"");
                     re0_buffer_write_char(b, ')'); break;
                 }
-                /* dir builtins（目录遍历，i64 句柄） */
+                /* dir builtins (directory traversal, i64 handle) */
                 if (strcmp(fn, "dir_open") == 0)  { re0_buffer_write_str(b, "__reo_dir_open((char*)"); goto gen1; }
                 if (strcmp(fn, "dir_next") == 0)  { re0_buffer_write_str(b, "__reo_dir_next("); goto gen1; }
                 if (strcmp(fn, "dir_close") == 0) { re0_buffer_write_str(b, "__reo_dir_close("); goto gen1; }
@@ -1108,7 +1108,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 break;
             }
             generic_call:
-            /* 泛型函数调用检测：推断类型参数 → 实例化 → 调用 mangled 名 */
+            /* generic call detection: infer type args → instantiate → call mangled name */
             if (e->call.callee->kind == EXPR_IDENT) {
                 const char *fn = e->call.callee->ident.name;
                 char mangled_buf[256];
@@ -1125,7 +1125,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                     break;
                 }
             }
-            /* Lambda 间接调用: callee 是 lambda 变量 */
+            /* lambda indirect call: callee is a lambda variable */
             if (e->call.callee->kind == EXPR_IDENT) {
                 const char *fn = e->call.callee->ident.name;
                 const char *vt = var_c_type(fn);
@@ -1188,7 +1188,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 e->select.field);
             break;
         case EXPR_STRUCT_INIT: {
-            /* 泛型 struct: 推断类型 + 实例化 + 使用 mangled 名 */
+            /* generic struct: infer type + instantiate + use mangled name */
             const char *sname = e->struct_init.name;
             char mangled_buf[256]; const char *mangled = try_instantiate_generic_struct_init(c, e, mangled_buf, sizeof(mangled_buf));
             if (mangled) sname = mangled;
@@ -1250,9 +1250,9 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
         }
         case EXPR_TRY: {
             /* expr? → GCC statement expression
-             * Option: None=tag0 提前返回; Some=tag1 取 payload
-             * Result: Err=tag1 提前返回;  Ok=tag0 取 payload
-             * 按内部表达式类型区分 Option/Result(推断不出时默认 Option) */
+             * Option: None=tag0 early return; Some=tag1 take payload
+             * Result: Err=tag1 early return;  Ok=tag0 take payload
+             * distinguish Option/Result by inner expression type (default Option if inference fails) */
             int t = c->temp_counter++;
             char inner_type[128] = {0};
             int is_result =
@@ -1267,7 +1267,7 @@ static int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             break;
         }
         case EXPR_LAMBDA: {
-            /* 生成唯一 lambda 名，注册延迟生成，返回函数指针 */
+            /* generate unique lambda name, register for deferred generation, return function pointer */
             char name[64];
             snprintf(name, sizeof(name), "__reo_lambda_%d", g_lambda_counter++);
             if (g_lambda_count < MAX_LAMBDAS) {
@@ -1396,9 +1396,9 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             /* determine C type */
             const char *ctype = "int64_t";
             char inferred_type[128];
-            char ename[128], vname[128];   /* 须存活至下方 write_fmt/track_var，避免栈越作用域 */
+            char ename[128], vname[128];   /* must stay alive until write_fmt/track_var below, avoid stack out-of-scope */
             if (s->let_stmt.init && s->let_stmt.init->kind == EXPR_STRUCT_INIT) {
-                /* 泛型 struct: 通过 infer_expr_c_type 获取 mangled 名 */
+                /* generic struct: get mangled name via infer_expr_c_type */
                 if (!infer_expr_c_type(s->let_stmt.init, inferred_type, sizeof(inferred_type)))
                     ctype = s->let_stmt.init->struct_init.name;
                 else
@@ -1488,11 +1488,11 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                        s->if_stmt.branches[0].body_count, depth + 1);
             re0_buffer_write_indent(b, depth);
             re0_buffer_write_str(b, "}");
-            /* else if 链：如果 else body 只有一个 if 语句，生成 "else if" 而非 "else { if }" */
+            /* else-if chain: if else body is a single if statement, emit "else if" instead of "else { if }" */
             if (s->if_stmt.else_body && s->if_stmt.else_count > 0) {
                 if (s->if_stmt.else_count == 1 && s->if_stmt.else_body[0] &&
                     s->if_stmt.else_body[0]->kind == STMT_IF) {
-                    /* else if 链 */
+                    /* else-if chain */
                     re0_buffer_write_str(b, " else ");
                     c_gen_stmt(c, s->if_stmt.else_body[0], depth);
                 } else {
@@ -1516,7 +1516,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
         case STMT_FOR: {
             re0_buffer_write_indent(b, depth);
             Re0Expr *iter = s->for_stmt.iter;
-            /* range 迭代: for i in start..end */
+            /* range iteration: for i in start..end */
             if (iter && iter->kind == EXPR_BINARY &&
                 iter->binary.op == BINOP_RANGE) {
                 re0_buffer_write_fmt(b, "for (int64_t %s = ", s->for_stmt.var);
@@ -1525,7 +1525,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 c_gen_expr(c, iter->binary.right);
                 re0_buffer_write_fmt(b, "); %s++) {\n", s->for_stmt.var);
             }
-            /* 字符串迭代: for ch in s → 逐字节 */
+            /* string iteration: for ch in s → byte by byte */
             else if (iter && expr_is_string(iter)) {
                 int t = c->temp_counter++;
                 re0_buffer_write_fmt(b, "{ const char* __s%d = ", t);
@@ -1536,9 +1536,9 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                                      "int64_t %s_val = (int64_t)(unsigned char)__s%d[%s];\n",
                                      s->for_stmt.var, s->for_stmt.var, t, s->for_stmt.var,
                                      s->for_stmt.var, t, s->for_stmt.var);
-                /* 在 body 中用 var_val 替代 ch 的值 */
+                /* inside body, var_val replaces ch's value */
             }
-            /* Vec 迭代: for x in v → 遍历 i64 slot */
+            /* Vec iteration: for x in v → walk i64 slots */
             else if (iter && expr_is_vec(iter)) {
                 int t = c->temp_counter++;
                 re0_buffer_write_fmt(b, "{ __reo_vec_t* __v%d = ", t);
@@ -1548,7 +1548,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 re0_buffer_write_fmt(b, "int64_t %s = __v%d->data[__i%d];\n",
                                      s->for_stmt.var, t, t);
             }
-            /* 数值迭代: for i in count */
+            /* numeric iteration: for i in count */
             else {
                 re0_buffer_write_fmt(b, "for (int64_t %s = 0; %s < (int64_t)(",
                                      s->for_stmt.var, s->for_stmt.var);
@@ -1558,14 +1558,14 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             c_gen_body(c, s->for_stmt.body, s->for_stmt.body_count, depth + 1);
             re0_buffer_write_indent(b, depth);
             re0_buffer_write_str(b, "}\n");
-            /* 字符串/Vec 迭代需要额外闭合外层括号 */
+            /* string/Vec iteration needs an extra closing brace for the outer block */
             if (iter && iter->kind != EXPR_BINARY &&
                 (expr_is_string(iter) || expr_is_vec(iter)))
                 re0_buffer_write_str(b, "}\n");
             break;
         }
         case STMT_FUNCTION: {
-            /* 泛型函数：注册后跳过，等待调用点按需实例化 */
+            /* generic function: register and skip, wait for call sites to instantiate on demand */
             if (s->function.type_param_count > 0) {
                 register_generic_fn(s->function.name, s);
                 break;
@@ -1592,7 +1592,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             break;
         }
         case STMT_STRUCT:
-            /* 泛型 struct：注册后跳过，等待实例化 */
+            /* generic struct: register and skip, wait for instantiation */
             if (s->struct_decl.type_param_count > 0) {
                 register_generic_struct(s->struct_decl.name, s);
                 break;
@@ -1625,7 +1625,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             /* traits are compile-time only, no C output */
             break;
         case STMT_IMPL: {
-            /* set self param type + 用 mangled 名生成方法 */
+            /* set self param type + generate method with mangled name */
             for (int i = 0; i < s->impl.method_count; i++) {
                 Re0Stmt *m = s->impl.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
@@ -1642,7 +1642,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                         self_idx = j;
                     }
                 }
-                /* 临时替换为 mangled 名 */
+                /* temporarily swap in mangled name */
                 char *orig_name = m->function.name;
                 char mangled_buf[256];
                 const char *mangled = re0_model_method_symbol(
@@ -1675,7 +1675,7 @@ static void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                                         s->component.state[i].name);
                 re0_buffer_write_fmt(b, "} %s;\n", s->component.name);
             }
-            /* set self param type + 用 mangled 名生成方法（与 STMT_IMPL 一致） */
+            /* set self param type + generate method with mangled name (same as STMT_IMPL) */
             for (int i = 0; i < s->component.method_count; i++) {
                 Re0Stmt *m = s->component.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
@@ -1744,7 +1744,7 @@ static void c_begin(Re0Codegen *c) {
         "#include <stdint.h>\n#include <stdbool.h>\n"
         "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n"
         "#include <dirent.h>\n#include <sys/stat.h>\n\n"
-        /* Option/Result 核心枚举类型 */
+        /* Option/Result core enum types */
         "typedef struct { int64_t tag; union { int64_t v0; } u; } Option;\n"
         "typedef struct { int64_t tag; union { int64_t v0; } u; } Result;\n"
         "typedef int64_t __reo_fn_ptr;\n\n"
@@ -1886,8 +1886,9 @@ static void c_begin(Re0Codegen *c) {
         "    return v->data[v->len - 1];\n"
         "}\n"
         "static int64_t __reo_vec_len(__reo_vec_t* v) { return v->len; }\n"
-        /* 定长数组: 堆分配,使其能跨越函数返回/存入 struct(栈复合字面量会悬空)。
-           与 vec 同样走 malloc(语言层由 GC/程序生命周期回收)。 */
+        /* fixed-length array: heap-allocated so it can survive function return / be stored
+            in a struct (stack compound literals would dangle). Uses malloc like vec
+            (reclaimed at the language level by GC/program lifetime). */
         "static int64_t* __reo_array_repeat(int64_t n, int64_t val) {\n"
         "    if (n < 0) n = 0;\n"
         "    int64_t* a = (int64_t*)malloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));\n"
@@ -1902,7 +1903,7 @@ static void c_begin(Re0Codegen *c) {
         "    if (n > 0) memcpy(a, src, sizeof(int64_t) * (size_t)n);\n"
         "    return a;\n"
         "}\n"
-        /* svec helpers: 字符串向量 { char** data; len; cap }，元素为 strdup 的串 */
+        /* svec helpers: string vector { char** data; len; cap }, elements are strdup'd strings */
         "typedef struct { char** data; int64_t len; int64_t cap; } __reo_svec_t;\n"
         "static __reo_svec_t* __reo_svec_new(void) {\n"
         "    __reo_svec_t* v = (__reo_svec_t*)malloc(sizeof(__reo_svec_t));\n"
@@ -1934,7 +1935,7 @@ static void c_begin(Re0Codegen *c) {
         "    for (int64_t i = 0; i < v->len; i++) free(v->data[i]);\n"
         "    free(v->data); free(v);\n"
         "}\n"
-        /* dir helpers: 目录遍历（POSIX dirent；mingw/ucrt64 自带兼容层）。句柄为 i64 */
+        /* dir helpers: directory traversal (POSIX dirent; mingw/ucrt64 ships a compat layer). Handle is i64 */
         "typedef struct { DIR* d; } __reo_dir_t;\n"
         "static int64_t __reo_dir_open(const char* path) {\n"
         "    if (!path) return -1;\n"
@@ -1993,7 +1994,7 @@ static void c_begin(Re0Codegen *c) {
         "    if (stat(p, &st) != 0) return false;\n"
         "    return S_ISDIR(st.st_mode);\n"
         "}\n"
-        /* proc helper: 子进程（封装 system） */
+        /* proc helper: subprocess (wraps system) */
         "static int64_t __reo_proc_run(const char* cmd) {\n"
         "    if (!cmd) return -1;\n"
         "    return (int64_t)system(cmd);\n"
@@ -2089,7 +2090,7 @@ static void c_begin(Re0Codegen *c) {
         "    return n->ptr;\n"
         "}\n\n");
     re0_buffer_write_str(&c->output,
-        /* ── spawn/await 并发运行时 (pthread Phase 0) ── */
+        /* ── spawn/await concurrency runtime (pthread Phase 0) ── */
         "#include <pthread.h>\n\n"
         "typedef int64_t (*__reo_task_fn)(void);\n"
         "typedef struct { __reo_task_fn fn; size_t result_len; char result_buf[128]; } __reo_task_ctx;\n"
@@ -2139,12 +2140,12 @@ static void c_begin(Re0Codegen *c) {
         "    pthread_mutex_unlock(&__reo_task_mtx);\n"
         "    return ret;\n"
         "}\n\n");
-    /* 记录 prelude 结束位置（供 c_end 插入前置声明） */
+    /* record prelude end position (for c_end to insert forward declarations) */
     g_fwd_insert_pos = c->output.len;
 }
 
 static void c_end(Re0Codegen *c) {
-    /* 生成所有 pending 泛型函数体（在 main 之前） */
+    /* generate all pending generic function bodies (before main) */
     flush_pending_instantiations(c);
     flush_generic_structs(c);
     flush_lambdas(c);

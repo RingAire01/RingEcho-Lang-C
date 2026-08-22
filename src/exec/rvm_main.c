@@ -1,13 +1,13 @@
 /*
  * rvm_main.c — RingEcho Version Manager (rvm)
  *
- * 类似 nvm：管理 RingEcho 编译器版本
- *   rvm install <version>        安装指定版本
- *   rvm use <version>            切换到指定版本
- *   rvm list                     列出已安装版本
- *   rvm current                  显示当前版本
- *   rvm uninstall <version>      移除版本
- *   rvm remote                   列出可用版本
+ * nvm-like: manage RingEcho compiler versions
+ *   rvm install <version>        install a specific version
+ *   rvm use <version>            switch to a specific version
+ *   rvm list                     list installed versions
+ *   rvm current                  show current version
+ *   rvm uninstall <version>      remove a version
+ *   rvm remote                   list available versions
  */
 
 #include "base/safe.h"

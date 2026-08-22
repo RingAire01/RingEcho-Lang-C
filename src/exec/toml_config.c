@@ -1,8 +1,8 @@
 /*
- * toml_config.c — ringecho.toml 精简解析器
+ * toml_config.c — minimal ringecho.toml parser
  *
- * 不使用外部 TOML 库，手写极简解析器：
- * 只支持 [section] + key = "value" 格式。
+ * No external TOML library; hand-written minimal parser:
+ * supports only [section] + key = "value" format.
  */
 #include "exec/toml_config.h"
 #include <stdio.h>
@@ -23,7 +23,7 @@ ReoTomlConfig reo_toml_default(void) {
     return c;
 }
 
-/* 去除首尾空白 */
+/* strip leading and trailing whitespace */
 static char *trim(char *s) {
     while (*s && isspace((unsigned char)*s)) s++;
     if (!*s) return s;
@@ -32,7 +32,7 @@ static char *trim(char *s) {
     return s;
 }
 
-/* 去除引号 */
+/* strip surrounding quotes */
 static char *unquote(char *s) {
     char *start = s;
     if (*start == '"') start++;
@@ -112,7 +112,7 @@ bool reo_toml_find_root(char *out_dir, size_t cap) {
             out_dir[cap - 1] = '\0';
             return true;
         }
-        /* 向上一级 */
+        /* go up one level */
         char *p = strrchr(dir, '/');
         if (!p || p == dir) break;
         *p = '\0';

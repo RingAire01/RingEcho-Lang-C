@@ -49,7 +49,7 @@ static inline void gc_unlock(Re0GcEngine *eng)
 #endif
 }
 
-/* ── 内部工具 ── */
+/* ── internal helpers ── */
 
 static uint64_t now_ns(void)
 {
@@ -67,7 +67,7 @@ static void engine_link(Re0GcEngine *eng, Re0GcObject *obj)
     eng->obj_count++;
 }
 
-/* 从引擎链表摘除节点（非 static，供 gc_arc/gc_hybrid 调用） */
+/* unlink a node from the engine list (non-static: used by gc_arc/gc_hybrid) */
 void re0_gc_engine_unlink_obj(Re0GcEngine *eng, Re0GcObject *obj)
 {
     if (!eng || !obj) return;
@@ -79,8 +79,9 @@ void re0_gc_engine_unlink_obj(Re0GcEngine *eng, Re0GcObject *obj)
     eng->obj_count--;
 }
 
-/* 摘除 + 根集摘除 + 统计 + 析构 + 释放（arc/hybrid/sweep 的标准释放路径）。
- * 根集同步摘除：被销毁对象的 root 记录若残留，下一次 mark 会解引用悬空指针。 */
+/* unlink + root-set removal + stats + destroy + free (standard release path
+ * for arc/hybrid/sweep). Roots are removed in sync: a stale root record
+ * would be dereferenced by the next mark. */
 void re0_gc_engine_destroy_obj(Re0GcEngine *eng, Re0GcObject *obj)
 {
     if (!eng || !obj) return;
@@ -90,7 +91,7 @@ void re0_gc_engine_destroy_obj(Re0GcEngine *eng, Re0GcObject *obj)
     re0_gc_object_destroy(obj);
 }
 
-/* NONE 模式：仅清理 ref_count<=0 的悬挂对象，不做 tracing */
+/* NONE mode: clear only ref_count<=0 dangling objects, no tracing */
 static int engine_collect_dangling(Re0GcEngine *eng)
 {
     int freed = 0;
@@ -106,7 +107,7 @@ static int engine_collect_dangling(Re0GcEngine *eng)
     return freed;
 }
 
-/* ── 公共 API ── */
+/* ── lifecycle ── */
 
 Re0GcEngine *re0_gc_engine_new(Re0GcConfig config)
 {
@@ -140,14 +141,14 @@ void re0_gc_engine_destroy(Re0GcEngine *eng)
 
     gc_lock(eng);
 
-    /* 广播销毁事件 */
+    /* broadcast destroy event */
     Re0GcEvent ev = re0_gc_event_make(
         RE0_GC_EV_ENGINE_DESTROY, eng->config.mode, eng->config.algo);
     ev.alive_count = eng->stats.alive_count;
     ev.alive_bytes = eng->stats.alive_bytes;
     re0_gc_listeners_emit(&eng->listeners, &ev);
 
-    /* 释放所有存活对象（不区分模式） */
+    /* free all surviving objects regardless of mode */
     Re0GcObject *obj = eng->head;
     while (obj) {
         Re0GcObject *next = obj->next;
@@ -167,7 +168,7 @@ void re0_gc_engine_destroy(Re0GcEngine *eng)
     free(eng);
 }
 
-/* collect 内核：调用方必须已持锁。 */
+/* collect kernel: caller must hold the lock. */
 static void engine_collect_locked(Re0GcEngine *eng)
 {
     if (!eng || eng->collecting) return;
@@ -208,10 +209,10 @@ static void engine_collect_locked(Re0GcEngine *eng)
     uint64_t elapsed = now_ns() - start;
     re0_gc_stats_on_collect(&eng->stats, freed, freed_bytes, elapsed);
 
-    /* 重置分配计数器 */
+    /* reset allocation counter */
     eng->alloc_since_gc = 0;
 
-    /* AUTO：动态调整下次阈值 */
+    /* AUTO: dynamically adjust the next threshold */
     if (eng->config.mode == RE0_GC_MODE_AUTO) {
         int new_th = (int)((float)eng->stats.alive_count * eng->config.gc_factor);
         if (new_th < eng->config.threshold)
@@ -222,13 +223,13 @@ static void engine_collect_locked(Re0GcEngine *eng)
     eng->collecting = false;
 }
 
-/* maybe-auto-collect 内核：调用方必须已持锁。 */
+/* maybe-auto-collect kernel: caller must hold the lock. */
 static void engine_maybe_auto_collect_locked(Re0GcEngine *eng)
 {
     if (eng->config.mode != RE0_GC_MODE_AUTO) return;
     if (eng->alloc_since_gc < eng->next_threshold) return;
 
-    /* 达到阈值，广播事件 */
+    /* threshold reached: broadcast event */
     Re0GcEvent ev = re0_gc_event_make(
         RE0_GC_EV_THRESHOLD_REACHED, eng->config.mode, eng->config.algo);
     ev.alive_count = eng->stats.alive_count;
@@ -237,7 +238,7 @@ static void engine_maybe_auto_collect_locked(Re0GcEngine *eng)
     engine_collect_locked(eng);
 }
 
-/* ── 公共 API（锁包装层）── */
+/* ── public API (lock wrapper layer) ── */
 
 Re0GcObject *re0_gc_engine_alloc(Re0GcEngine *eng, size_t size,
                                   Re0PtrKind kind,
@@ -255,7 +256,7 @@ Re0GcObject *re0_gc_engine_alloc(Re0GcEngine *eng, size_t size,
     re0_gc_stats_on_alloc(&eng->stats, size);
     eng->alloc_since_gc++;
 
-    /* 广播分配事件 */
+    /* broadcast alloc event */
     if (eng->listeners.count > 0) {
         Re0GcEvent ev = re0_gc_event_make(
             RE0_GC_EV_ALLOC, eng->config.mode, eng->config.algo);
@@ -344,11 +345,11 @@ void re0_gc_engine_release(Re0GcEngine *eng, Re0GcObject *obj)
     }
 
     if (eng->config.algo == RE0_GC_ALGO_ARC_CYCLE) {
-        /* ARC：ref_count==0 立即递归释放子对象链 */
+        /* ARC: ref_count==0 — release the child chain immediately */
         re0_gc_arc_release_chain(eng, obj);
     } else if (eng->config.algo == RE0_GC_ALGO_HYBRID &&
                re0_gc_hybrid_is_arc_managed(obj)) {
-        /* HYBRID：仅 OWNED 对象即时释放，其余等 collect */
+        /* HYBRID: only OWNED objects release now, the rest wait for collect */
         re0_gc_arc_release_chain(eng, obj);
     }
     gc_unlock(eng);
