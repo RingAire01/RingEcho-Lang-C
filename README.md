@@ -4,15 +4,16 @@ A zero-dependency C implementation of the RingEcho compiler toolchain.
 
 Compiles `.reo` source → C source → gcc → native binary. No LLVM, no external libraries required.
 
+English | [简体中文](README.zh.md) | [繁體中文](README.zht.md)
+
 ## Status
 
 | Item | Value |
 |------|-------|
 | Version | 0.2.0 |
-| Code size | ~11,300 lines (9,682 C + 1,577 headers, 89 files) |
-| Tests | 150 `.reo` end-to-end + 12 GC unit tests |
+| Tests | Passing (make test) |
 | Toolchain | 3 binaries: `rev` / `rem` / `rvm` |
-| Backends | C source, freestanding C, reo ISA |
+| Backends | C source, freestanding C, reo ISA, shared library, WebAssembly (WASI) |
 | License | MIT |
 
 ## Toolchain
@@ -44,6 +45,8 @@ Requires a C11 compiler (gcc/clang) with pthread support. See [BUILD.md](BUILD.m
 ```bash
 rev run <file.reo> [--target c|reo|c-freestanding]  # Compile and run
 rev build <file.reo> [-o out]                       # Compile to executable/asm
+rev build <file.reo> --shared                       # Compile to shared library (.so/.dll)
+rev build <file.reo> --target wasm                  # Compile to WebAssembly (WASI)
 rev build                                           # Build project (reads ringecho.toml)
 rev check <file.reo>                                # Type check only
 rev lsp                                             # Start LSP server
@@ -89,31 +92,13 @@ rvm remote             # List available versions
 - Component keyword
 - for-in range + string iteration
 - spawn/await concurrency (pthread)
-- **GC engine**: 3 modes (none/auto/manual) × 3 algorithms (tracing/arc-cycle/hybrid)
-- **LSP server**: JSON-RPC + diagnostics
+- GC engine: 3 modes (none/auto/manual) × 3 algorithms (tracing/arc-cycle/hybrid)
+- LSP server: JSON-RPC + diagnostics
 - Multi-file modules (import with recursive resolution)
 - extern C FFI
 - char type with full escape support
 - Virtual environments (`.renv/`) with bundled stdlib (`std::io`, `std::math`, `std::string`, `std::vec`)
 - Project configuration via `ringecho.toml`
-
-## Architecture
-
-```
-.reo → Lexer → Parser → AST → Sema → Lint → Codegen(C source) → gcc → binary
-```
-
-### GC Subsystem (`include/gc/` + `src/extra/gc/`)
-- `gc_engine.c` — unified engine facade (mode/algo dispatch)
-- `gc_tracing.c` — mark-sweep (3-color, gray worklist)
-- `gc_arc.c` — reference counting + cycle detection (tracing backup)
-- `gc_hybrid.c` — OWNED instant + rest tracing
-- `gc_events.c` — GC event listener system
-- `gc_stats.c` — allocation/collection statistics
-
-### LSP Server (`src/lsp/`)
-- `lsp_json.c` — minimal JSON parser
-- `lsp_server.c` — JSON-RPC over stdin/stdout
 
 ## Testing
 
@@ -125,39 +110,6 @@ make check-one FILE=tests/hello.reo  # Type-check a single test
 make test-list                       # List all tests
 ```
 
-| Suite | Location | Driven by |
-|-------|----------|-----------|
-| End-to-end (68) | `tests/*.reo`, `tests/stdlib/*.reo` | `make test` |
-| Module system (5) | `tests/mod/` | manual |
-| Rust compat (10) | `tests/rust_compat/` | manual |
-| IR regression (67) | `tests/rust_inline/` | manual |
-| GC unit tests (12) | `tests/gc_unit_test.c` | standalone compile |
-
-GC unit tests are compiled standalone:
-
-```bash
-gcc -Iinclude tests/gc_unit_test.c src/extra/gc/*.c src/base/*.c -o gc_test && ./gc_test
-```
-
-## Project Structure
-
-```
-src/
-  front/          lexer, parser, token, ast, stream
-  analysis/       sema, model, scope, builtins, lint
-  backend/        codegen, backend_c, backend_reo
-  base/           arena, buffer, error, span, types, log
-  exec/           compiler, build, workspace, venv, toml_config,
-                  rev_main (compiler), rem_main (packages), rvm_main (versions)
-  lsp/            lsp_json, lsp_server
-  extra/
-    gc/           GC engine modules
-    re0_event.c   event bus
-    re0_manager.c manager pattern
-include/          mirrors src/, one init.h per module + re0.h aggregate
-tests/            .reo end-to-end tests + C unit tests
-```
-
 ## License
 
-[MIT](LICENSE) - Copyright (c) 2025-2026 初然 (KaguyaRing) & Ringaire
+[MIT](LICENSE) - Copyright (c) 2025-2026 辉夜铃 (KaguyaRing) & Ringaire
