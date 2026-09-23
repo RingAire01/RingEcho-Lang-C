@@ -39,7 +39,7 @@ ifeq ($(findstring OHOS,$(UNAME_S)),OHOS)
 endif
 
 CPPFLAGS := -Iinclude
-CFLAGS_COMMON := -Wno-overlength-strings -Wall -Wextra -Wpedantic -std=c11 -pipe -D_POSIX_C_SOURCE=200809L
+CFLAGS_COMMON := -Wall -Wextra -Wpedantic -Wno-overlength-strings -std=c11 -pipe -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?= -pthread
 
 # On Windows, use -lpthread equivalent is built into libwinpthread.
@@ -65,7 +65,7 @@ else
     $(error unsupported CONFIG '$(CONFIG)'; use Release, Debug, or Alpha)
 endif
 
-CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_PROFILE)
+CFLAGS := $(CFLAGS_COMMON) $(CFLAGS_PROFILE) $(EXTRA_CFLAGS)
 
 # ── module directories ──
 BASE := src/base
@@ -76,10 +76,10 @@ EXEC := src/exec
 EXTRA := src/extra
 
 # ── source files grouped by module ──
-BASE_SRCS := $(BASE)/arena.c $(BASE)/buffer.c $(BASE)/error.c $(BASE)/re0_log.c $(BASE)/safe.c $(BASE)/span.c $(BASE)/types.c
+BASE_SRCS := $(BASE)/arena.c $(BASE)/buffer.c $(BASE)/error.c $(BASE)/re0_log.c $(BASE)/safe.c $(BASE)/span.c $(BASE)/types.c $(BASE)/numeric.c
 FRONT_SRCS := $(FRONT)/lexer.c $(FRONT)/token.c $(FRONT)/parser.c $(FRONT)/ast.c $(FRONT)/stream.c
 ANALYSIS_SRCS := $(ANALYSIS)/sema.c $(ANALYSIS)/scope.c $(ANALYSIS)/model.c $(ANALYSIS)/builtins.c $(ANALYSIS)/lint.c
-BACKEND_SRCS := $(BACKEND)/codegen.c $(BACKEND)/backend_c.c $(BACKEND)/backend_c_type.c $(BACKEND)/backend_c_generic.c $(BACKEND)/backend_c_expr.c $(BACKEND)/backend_c_stmt.c $(BACKEND)/backend_reo.c $(BACKEND)/runtime_c.c
+BACKEND_SRCS := $(BACKEND)/codegen.c $(BACKEND)/backend_c.c $(BACKEND)/backend_c_type.c $(BACKEND)/backend_c_generic.c $(BACKEND)/backend_c_expr.c $(BACKEND)/backend_c_stmt.c $(BACKEND)/backend_reo.c $(BACKEND)/runtime_c.c $(BACKEND)/runtime_conversion.c $(BACKEND)/backend_c_cast.c
 LSP_DIR := src/lsp
 LSP_SRCS := $(LSP_DIR)/lsp_json.c $(LSP_DIR)/lsp_server.c
 EXTRA_SRCS := $(EXTRA)/re0_event.c $(EXTRA)/re0_manager.c
@@ -98,7 +98,7 @@ GC_SRCS := \
 
 # ── 共享库对象文件（不含 main，三个二进制共用） ──
 LIB_SRCS := $(BASE_SRCS) $(FRONT_SRCS) $(ANALYSIS_SRCS) $(BACKEND_SRCS) \
-            $(EXEC)/compiler.c $(EXEC)/build.c $(EXEC)/workspace.c \
+            $(EXEC)/compiler.c $(EXEC)/build.c $(EXEC)/process.c $(EXEC)/workspace.c \
             $(EXEC)/venv.c $(EXEC)/toml_config.c \
             $(LSP_SRCS) $(EXTRA_SRCS) $(GC_SRCS)
 LIB_OBJS := $(patsubst %.c,$(OBJECT_DIR)/%.o,$(LIB_SRCS))
@@ -109,11 +109,11 @@ REM_MAIN_OBJ := $(OBJECT_DIR)/$(EXEC)/rem_main.o
 RVM_MAIN_OBJ := $(OBJECT_DIR)/$(EXEC)/rvm_main.o
 
 CHECK_FAILURE_TESTS := $(filter-out tests/invalid_array_oob.reo,$(wildcard tests/invalid_*.reo)) tests/sema_error.reo
-RUNTIME_FAILURE_TESTS := tests/divzero.reo tests/invalid_array_oob.reo
+RUNTIME_FAILURE_TESTS := tests/divzero.reo tests/invalid_array_oob.reo tests/stack_overflow.reo
 POSITIVE_TESTS := $(filter-out $(CHECK_FAILURE_TESTS) $(RUNTIME_FAILURE_TESTS),$(wildcard tests/*.reo tests/stdlib/*.reo))
 
 .DEFAULT_GOAL := rev
-.PHONY: all build rev rem rvm release debug alpha test test-one check-one test-list clean clean-temp platform-info
+.PHONY: test-conversion all build rev rem rvm release debug alpha test test-one check-one test-list clean clean-temp platform-info
 
 all: release
 
@@ -154,7 +154,7 @@ $(TARGET_RVM): $(RVM_MAIN_OBJ)
 
 $(OBJECT_DIR)/%.o: %.c
 	@$(MKDIR_P) "$(dir $@)"
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o "$@" "$<"
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o "$@" "$<"
 
 test: $(TARGET_REV)
 	@set -e; for f in $(POSITIVE_TESTS); do \
@@ -204,3 +204,9 @@ clean-temp:
 clean:
 	rm -rf target
 	rm -f rev rev.exe rem rem.exe rvm rvm.exe re0_output.c re0_tmp_out output.reo.asm a.out a.exe
+
+-include $(LIB_OBJS:.o=.d) $(REV_MAIN_OBJ:.o=.d) $(REM_MAIN_OBJ:.o=.d) $(RVM_MAIN_OBJ:.o=.d)
+
+PYTHON ?= python3
+test-conversion: $(TARGET_REV)
+	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/conversion -p "test_*.py"

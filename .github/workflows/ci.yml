@@ -1,33 +1,222 @@
-name: CI
+name: 构建与安装包
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
+    name: ${{ matrix.platform }} / ${{ matrix.arch }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            arch: x86_64
-          - os: ubuntu-24.04-arm
-            arch: aarch64
-          - os: macos-latest
-            arch: aarch64
-          - os: windows-latest
-            arch: x86_64
-
-    runs-on: ${{ matrix.os }}
-
+          - runner: ubuntu-24.04
+            platform: windows
+            arch: x64
+            cc: x86_64-w64-mingw32-clang
+          - runner: ubuntu-24.04
+            platform: windows
+            arch: x86
+            cc: i686-w64-mingw32-clang
+          - runner: ubuntu-24.04
+            platform: windows
+            arch: arm64
+            cc: aarch64-w64-mingw32-clang
+          - runner: macos-15-intel
+            platform: macos
+            arch: x64
+            cc: clang
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+            cc: clang
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+            cc: gcc
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x86
+            cc: gcc -m32
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            cc: gcc
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      REO_KEEP_C: '0'
+      TARGET_PLATFORM: ${{ matrix.platform }}
+      TARGET_ARCH: ${{ matrix.arch }}
+      TARGET_CC: ${{ matrix.cc }}
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: 安装 Linux 打包工具
+        if: matrix.platform == 'linux'
+        run: |
+          if [[ "$TARGET_ARCH" == x86 ]]; then
+            sudo dpkg --add-architecture i386
+          fi
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential dpkg-dev
+          if [[ "$TARGET_ARCH" == x86 ]]; then
+            sudo apt-get install --no-install-recommends -y gcc-multilib
+          fi
+      - name: 安装固定版本的 Windows 交叉编译器
+        if: matrix.platform == 'windows'
+        run: bash scripts/ci/llvm-mingw.sh
+      - name: 生成版本元数据
+        id: metadata
+        run: |
+          revision="$(git rev-parse HEAD)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev.${GITHUB_RUN_NUMBER}.${revision:0:7}"
+          fi
+          python -c 'import sys; sys.path.insert(0, "scripts/ci"); from package import version_string; version_string(sys.argv[1])' "$version"
+          printf 'version=%s\nrevision=%s\nepoch=%s\n' "$version" "$revision" "$(git show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+      - name: 构建三个工具
+        run: |
+          if [[ "$TARGET_PLATFORM" == windows ]]; then
+            make -j4 CONFIG=Release PLATFORM=Windows CC="$TARGET_CC" LDFLAGS='-static -pthread' EXTRA_CFLAGS=-Werror build
+            python scripts/ci/windows-imports.py target/Release
+          else
+            make -j4 CONFIG=Release CC="$TARGET_CC" EXTRA_CFLAGS=-Werror build
+          fi
+      - name: 打包规则测试
+        run: python -m unittest discover -s tests/ci -p 'test_*.py'
+      - name: 原生启动与语义检查
+        if: matrix.platform != 'windows'
+        run: python scripts/ci/smoke.py target/Release
+      - name: 完整现有回归与转换断言
+        if: matrix.platform != 'windows' && matrix.arch != 'x86'
+        env:
+          REO_CC: ${{ matrix.cc }}
+        run: |
+          make CONFIG=Release test
+          make CONFIG=Release PYTHON=python test-conversion
+      - name: 记录 32 位运行时限制
+        if: matrix.arch == 'x86'
+        run: |
+          printf '%s\n' 'x86：已构建工具；当前 C 运行时依赖原生 __int128，完整运行时回归待后续修复，未标记通过。' >> "$GITHUB_STEP_SUMMARY"
+      - name: 打包并生成 SHA256
+        env:
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+          PACKAGE_REVISION: ${{ steps.metadata.outputs.revision }}
+          SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.epoch }}
+        run: |
+          python scripts/ci/package.py --platform "$TARGET_PLATFORM" --arch "$TARGET_ARCH" \
+            --version "$PACKAGE_VERSION" --revision "$PACKAGE_REVISION" --epoch "$SOURCE_DATE_EPOCH"
+      - name: 验证 Linux 软件包安装
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get install --no-install-recommends -y ./target/packages/*.deb
+          python scripts/ci/smoke.py /usr/bin
+          sudo dpkg --remove ringecho
+      - name: 验证 macOS 软件包安装
+        if: matrix.platform == 'macos'
+        run: |
+          package=(target/packages/*.pkg)
+          sudo installer -pkg "${package[0]}" -target /
+          python scripts/ci/smoke.py /usr/local/bin
+      - name: 上传便携包与 Unix 安装包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ringecho-${{ matrix.platform }}-${{ matrix.arch }}
+          path: target/packages/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
-      - name: Build (Release)
-        run: make CONFIG=Release build
+  windows-installer:
+    name: Windows 安装程序 / ${{ matrix.arch }}
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86, arm64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ringecho-windows-${{ matrix.arch }}
+          path: target/download
+      - name: 构建安装程序
+        shell: pwsh
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: ./scripts/ci/windows-package.ps1 -Arch $env:TARGET_ARCH
+      - name: 上传 Windows 安装程序
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ringecho-windows-${{ matrix.arch }}-installer
+          path: target/installers/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
-      - name: Test
-        run: make CONFIG=Release test
+  windows-installed-smoke:
+    name: Windows 安装验证 / ${{ matrix.arch }}
+    needs: windows-installer
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+          - runner: windows-2025
+            arch: x86
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ringecho-windows-${{ matrix.arch }}-installer
+          path: target/installers
+      - name: 安装、启动、语义检查及卸载
+        shell: pwsh
+        run: ./scripts/ci/windows-smoke.ps1
+
+  package-gate:
+    name: 所有安装包检查
+    if: always()
+    needs: [build, windows-installer, windows-installed-smoke]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 检查全部结果
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          INSTALLER_RESULT: ${{ needs.windows-installer.result }}
+          SMOKE_RESULT: ${{ needs.windows-installed-smoke.result }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$INSTALLER_RESULT" = success
+          test "$SMOKE_RESULT" = success
