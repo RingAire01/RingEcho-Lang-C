@@ -1,0 +1,10 @@
+fn main() {
+    let a: i64 = gc_stats()
+    let s: str = str_concat("x", "y")
+    let b: i64 = gc_stats()
+    free(s)
+    let c: i64 = gc_stats()
+    println(a)
+    println(b)
+    println(c)
+}

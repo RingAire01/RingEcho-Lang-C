@@ -1,5 +1,6 @@
 #include "base/safe.h"
 #include "exec/compiler.h"
+#include "exec/process.h"
 #include "exec/workspace.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,7 +9,13 @@
 
 void re0_compiler_init(Re0Compiler *c, Re0Backend *backend) {
     if (!c) return;
+    /* Zero the whole struct so nested vectors (parser.stmts, lexer.stream)
+     * start as NULL and re0_parser_init's defensive free(NULL) is safe even
+     * when the caller allocated the compiler on the stack. */
+    memset(c, 0, sizeof(*c));
     c->had_error = false;
+    c->shared = false;
+    c->wasm = false;
     re0_event_bus_init(&c->bus);
     c->backend = backend;
     re0_error_list_init(&c->errors);
@@ -72,6 +79,7 @@ static bool stage_sema_run(Re0Manager *m) {
     Re0Compiler *c = ctx->comp;
     if (re0_manager_should_cancel(m)) return false;
     re0_manager_emit_event(m, RE0_EV_SEMA_START, NULL, NULL);
+    c->sema.supports_conversions = c->codegen.backend != &re0_backend_reo;
     bool ok = re0_sema_check(&c->sema, &ctx->stmts);
     re0_manager_emit_event(m, RE0_EV_SEMA_DONE, NULL, NULL);
     if (!ok) { c->had_error = true; return false; }
@@ -85,6 +93,8 @@ static bool stage_codegen_run(Re0Manager *m) {
     Re0Compiler *c = ctx->comp;
     if (re0_manager_should_cancel(m)) return false;
     re0_manager_emit_event(m, RE0_EV_CODEGEN_START, NULL, NULL);
+    /* Library mode: no `int main()` entry point is emitted. */
+    c->codegen.emit_main = !c->shared;
     if (!re0_codegen_generate(&c->codegen, &c->sema.checked)) {
         re0_manager_emit_event(m, RE0_EV_CODEGEN_DONE, NULL, NULL);
         c->had_error = true;
@@ -107,7 +117,28 @@ static bool stage_build_run(Re0Manager *m) {
     Re0Compiler *c = ctx->comp;
     if (re0_manager_should_cancel(m)) return false;
     re0_manager_emit_event(m, RE0_EV_BUILD_START, NULL, NULL);
-    if (c->backend == &re0_backend_c) {
+    if (c->wasm) {
+        /* WebAssembly target: write the C source, then compile with the
+         * wasi-sdk clang (REO_WASI_CC) to wasm32-wasi. */
+        const char *cc = getenv("REO_WASI_CC");
+        if (!cc || !*cc) cc = "/opt/wasi-sdk/bin/clang";
+        const char *fname = ctx->output ? ctx->output : "output.wasm";
+        if (!re0_build_write_source(&c->build, ctx->code)) {
+            c->had_error = true;
+            return false;
+        }
+        const char *cfile = c->build.tmp_file;
+        const char *arguments[] = {cc, "--target=wasm32-wasi", "-O1", cfile, "-o", fname, NULL};
+        int rc = re0_process_run(cc, arguments);
+        if (rc != 0) {
+            re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                             "wasm compilation failed (exit code %d)", rc);
+            c->had_error = true;
+            re0_manager_emit_event(m, RE0_EV_BUILD_DONE, NULL, NULL);
+            return false;
+        }
+    } else if (c->backend == &re0_backend_c) {
+        c->build.shared = c->shared;
         if (!re0_build_compile(&c->build, ctx->code, ctx->output)) {
             re0_manager_emit_event(m, RE0_EV_BUILD_DONE, NULL, NULL);
             c->had_error = true;
@@ -167,6 +198,10 @@ bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *out
     re0_manager_register_child(&root, &build.base);
 
     bool ok = re0_manager_execute(&root);
+    /* The merged statement vector's pointer array is heap-allocated by
+     * re0_workspace_load (Re0StmtVec_push reallocs); the statements
+     * themselves are arena-owned AST nodes. Release only the pointer array. */
+    Re0StmtVec_free(&ctx.stmts);
     return ok && !c->had_error;
 }
 
@@ -178,16 +213,8 @@ bool re0_compiler_run(Re0Compiler *c, const char *path) {
     }
     if (!re0_compiler_compile_file(c, path, tmpname)) return false;
     if (c->backend == &re0_backend_c) {
-        char command[sizeof(tmpname) + 3];
-        int command_size = snprintf(command, sizeof(command), "\"%s\"", tmpname);
-        if (command_size < 0 || (size_t)command_size >= sizeof(command)) {
-            re0_error_append(&c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
-                             "temporary executable path exceeds internal limit");
-            remove(tmpname);
-            c->had_error = true;
-            return false;
-        }
-        int rc = system(command);
+        const char *arguments[] = {tmpname, NULL};
+        int rc = re0_process_run(tmpname, arguments);
         if (remove(tmpname) != 0 && errno != ENOENT) {
             re0_error_append(&c->errors, RE0_WARN, RE0_SPAN_ZERO, NULL,
                              "cannot remove temporary executable '%s'", tmpname);

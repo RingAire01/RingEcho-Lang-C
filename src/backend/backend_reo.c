@@ -19,8 +19,16 @@
 /* ── struct registration (informational: name + field count) ──
  * Field offsets are not stored: the legacy offsets[16] array was write-only
  * dead data whose fixed capacity overflowed on 17+ field structs. */
-static struct { char *name; int count; } reo_structs[MAX_STRUCTS];
-static int reo_struct_count = 0;
+#if defined(_MSC_VER)
+static __declspec(thread) struct { char *name; int count; } reo_structs[MAX_STRUCTS];
+static __declspec(thread) int reo_struct_count = 0;
+#elif defined(__GNUC__) || defined(__clang__)
+static __thread struct { char *name; int count; } reo_structs[MAX_STRUCTS];
+static __thread int reo_struct_count = 0;
+#else
+static _Thread_local struct { char *name; int count; } reo_structs[MAX_STRUCTS];
+static _Thread_local int reo_struct_count = 0;
+#endif
 
 static void reo_register_struct(Re0Codegen *c, const char *name, int count) {
     if (reo_struct_count >= MAX_STRUCTS) {
@@ -51,8 +59,16 @@ typedef struct {
     int reg;
 } VarMap;
 
-static VarMap var_map[MAX_VARS];
-static int var_count = 0;
+#if defined(_MSC_VER)
+static __declspec(thread) VarMap var_map[MAX_VARS];
+static __declspec(thread) int var_count = 0;
+#elif defined(__GNUC__) || defined(__clang__)
+static __thread VarMap var_map[MAX_VARS];
+static __thread int var_count = 0;
+#else
+static _Thread_local VarMap var_map[MAX_VARS];
+static _Thread_local int var_count = 0;
+#endif
 
 static int lookup_var(const char *name) {
     for (int i = 0; i < var_count; i++)
@@ -105,10 +121,21 @@ static int eval_expr(Re0Codegen *c, Re0Expr *e) {
     if (!e) return R_ZERO;
     switch (e->kind) {
         case EXPR_INT: {
+            if (!re0_integer_fits(e->int_lit.integer, 64, true)) {
+                re0_error_append(c->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                 "reo backend cannot represent this wide integer literal");
+                c->had_error = true;
+                return R_ZERO;
+            }
             int r = re0_codegen_new_reg(c);
             emit(c, "    LI R%d, %lld", r, (long long)e->int_lit.val);
             return r;
         }
+        case EXPR_CAST:
+            re0_error_append(c->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                             "reo backend does not support this conversion; use the C backend");
+            c->had_error = true;
+            return R_ZERO;
         case EXPR_FLOAT:
         case EXPR_BOOL: {
             int r = re0_codegen_new_reg(c);

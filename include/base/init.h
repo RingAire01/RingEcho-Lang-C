@@ -8,6 +8,7 @@
 #include "base/vec.h"
 #include "base/buffer.h"
 #include "base/types.h"
+#include "base/numeric.h"
 #include "base/span.h"
 #include "base/error.h"
 

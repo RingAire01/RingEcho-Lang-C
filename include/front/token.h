@@ -24,7 +24,10 @@ typedef enum {
     TK_EOF, TK_ERROR,
 } Re0TokenKind;
 
+#include "base/numeric.h"
+
 typedef struct {
+    Re0Integer integer;
     Re0TokenKind kind;
     Re0Span span;
     union { char *str_val; int64_t int_val; double float_val; char char_val; };

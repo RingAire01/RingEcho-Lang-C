@@ -1,0 +1,59 @@
+struct Point {
+    x: i64,
+    y: f64,
+}
+
+fn get_bool(flag: i64) -> bool {
+    if flag > 0 {
+        return true;
+    }
+    return false;
+}
+
+fn get_float(a: f64, b: f64) -> f64 {
+    return a + b;
+}
+
+fn get_str(tag: i64) -> str {
+    if tag == 1 {
+        return "hello";
+    }
+    return "world";
+}
+
+fn get_char() -> char {
+    return 'Z';
+}
+
+fn make_point(x: i64, y: f64) -> Point {
+    return Point { x: x, y: y };
+}
+
+fn get_u8() -> u8 {
+    return 255 as u8;
+}
+
+fn main() {
+    let b1 = get_bool(1);
+    let b2 = get_bool(0);
+    println(b1);
+    println(b2);
+
+    let f = get_float(1.25, 2.5);
+    println(f);
+
+    let s1 = get_str(1);
+    let s2 = get_str(2);
+    println(s1);
+    println(s2);
+
+    let ch = get_char();
+    println(ch);
+
+    let p = make_point(42, 3.14);
+    println(p.x);
+    println(p.y);
+
+    let u = get_u8();
+    println(u);
+}

@@ -1,0 +1,12 @@
+fn order_dep() {
+    let s = get_str_below();
+    println(s);
+}
+
+fn get_str_below() -> str {
+    return "forward_declared_str";
+}
+
+fn main() {
+    order_dep();
+}

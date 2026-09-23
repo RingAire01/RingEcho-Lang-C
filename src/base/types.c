@@ -98,9 +98,9 @@ size_t re0_type_sizeof_full(const Re0Type *t) {
 
 Re0Type *re0_type_make(Re0TypeKind k, void *arena) {
     Re0Type *t;
-    if (arena) t = (Re0Type*)re0_arena_alloc_zero((Re0Arena*)arena, sizeof(Re0Type));
-    else { t = (Re0Type*)xcalloc(1, sizeof(Re0Type)); }
-    if (t) t->kind = k;
+    if (arena) { t = (Re0Type*)re0_arena_alloc_zero((Re0Arena*)arena, sizeof(Re0Type)); }
+    else       { t = (Re0Type*)xcalloc(1, sizeof(Re0Type)); }
+    if (t) { t->kind = k; t->owned = (arena == NULL); }
     return t;
 }
 
@@ -289,9 +289,18 @@ bool re0_type_equal(const Re0Type *a, const Re0Type *b) {
 bool re0_type_coercible(const Re0Type *from, const Re0Type *to) {
     if (re0_type_equal(from, to)) return true;
     if (!from || !to) return false;
-    /* numeric implicit conversion (int to int, float to float, int to float) */
-    if (re0_type_is_numeric(from->kind) && re0_type_is_numeric(to->kind))
-        return true;
+    /* Only conversions preserving every possible source value are implicit. */
+    if (re0_type_is_integer(from->kind) && re0_type_is_integer(to->kind)) {
+        size_t source = re0_type_sizeof(from->kind), target = re0_type_sizeof(to->kind);
+        bool ss = re0_type_is_signed(from->kind), ts = re0_type_is_signed(to->kind);
+        return ss == ts ? target >= source : (!ss && ts && target > source);
+    }
+    if (from->kind == RE0_TYPE_F32 && to->kind == RE0_TYPE_F64) return true;
+    if (re0_type_is_integer(from->kind) && re0_type_is_float(to->kind)) {
+        unsigned significant = (unsigned)re0_type_sizeof(from->kind) * 8 -
+                               (re0_type_is_signed(from->kind) ? 1U : 0U);
+        return significant <= (to->kind == RE0_TYPE_F32 ? 24U : 53U);
+    }
     /* UNKNOWN is assignable to any type (lenient policy during inference) */
     if (from->kind == RE0_TYPE_UNKNOWN || to->kind == RE0_TYPE_UNKNOWN)
         return true;
@@ -384,7 +393,7 @@ Re0Type *re0_type_parse(const char *s) {
     if (strcmp(buf, "i8") == 0) { free(buf); return re0_type_make(RE0_TYPE_I8, NULL); }
     if (strcmp(buf, "i16") == 0) { free(buf); return re0_type_make(RE0_TYPE_I16, NULL); }
     if (strcmp(buf, "i32") == 0) { free(buf); return re0_type_make(RE0_TYPE_I32, NULL); }
-    if (strcmp(buf, "i64") == 0) { free(buf); return re0_type_make(RE0_TYPE_I64, NULL); }
+    if (strcmp(buf, "i64") == 0 || strcmp(buf, "ConversionError") == 0) { free(buf); return re0_type_make(RE0_TYPE_I64, NULL); }
     if (strcmp(buf, "i128") == 0) { free(buf); return re0_type_make(RE0_TYPE_I128, NULL); }
     if (strcmp(buf, "isize") == 0) { free(buf); return re0_type_make(RE0_TYPE_ISIZE, NULL); }
     if (strcmp(buf, "u8") == 0) { free(buf); return re0_type_make(RE0_TYPE_U8, NULL); }
@@ -590,4 +599,61 @@ Re0Type *re0_type_parse(const char *s) {
         free(buf);
         return r;
     }
+}
+
+/* ── free one heap-owned (owned==true) type node ──
+ *
+ * Frees only this node's directly-owned heap fields (named.name,
+ * generic.name, generic.args pointer array, tuple.elems pointer array,
+ * func.params pointer array). Child type objects are NOT freed here:
+ * they are tracked separately by the sema owned_types list, which releases
+ * each shared object exactly once (recursive free here would double-free
+ * shared children). arena-owned (owned==false) nodes are skipped entirely. */
+void re0_type_free(Re0Type *t) {
+    if (!t || !t->owned) return;
+    switch (t->kind) {
+        case RE0_TYPE_TUPLE:
+            free(t->tuple.elems);
+            break;
+        case RE0_TYPE_STRUCT:
+        case RE0_TYPE_ENUM:
+        case RE0_TYPE_TYPEVAR:
+            free(t->named.name);
+            break;
+        case RE0_TYPE_FN:
+            free(t->func.params);
+            break;
+        case RE0_TYPE_GENERIC:
+            free(t->generic.name);
+            free(t->generic.args);
+            break;
+        default:
+            /* scalar and simple composite kinds (i8..u128, f32/f64, bool,
+             * char, str, ptr, unit, never, unknown, array, slice, vec,
+             * reference) own no heap fields beyond the node itself. */
+            break;
+    }
+    free(t);
+}
+
+void re0_type_free_tree(Re0Type *t) {
+    if (!t || !t->owned) return;
+    switch (t->kind) {
+        case RE0_TYPE_ARRAY: re0_type_free_tree(t->array.inner); break;
+        case RE0_TYPE_SLICE: re0_type_free_tree(t->slice.inner); break;
+        case RE0_TYPE_VEC: re0_type_free_tree(t->vec.inner); break;
+        case RE0_TYPE_REFERENCE: re0_type_free_tree(t->ref_.inner); break;
+        case RE0_TYPE_TUPLE:
+            for (int i = 0; i < t->tuple.count; i++) re0_type_free_tree(t->tuple.elems[i]);
+            break;
+        case RE0_TYPE_GENERIC:
+            for (int i = 0; i < t->generic.arg_count; i++) re0_type_free_tree(t->generic.args[i]);
+            break;
+        case RE0_TYPE_FN:
+            for (int i = 0; i < t->func.param_count; i++) re0_type_free_tree(t->func.params[i]);
+            re0_type_free_tree(t->func.ret);
+            break;
+        default: break;
+    }
+    re0_type_free(t);
 }

@@ -28,6 +28,13 @@ typedef struct {
     Re0GcPool          *gc;
     Re0GcMode           gc_mode;
     bool                had_error;
+    /* When true, compile as a shared library: the C backend emits no `main`
+     * entry point and the build links with `-shared -fPIC`. */
+    bool                shared;
+    /* When true, compile to WebAssembly (WASI) via the freestanding backend
+     * plus the wasi-sdk clang. The build writes the C source and invokes
+     * clang --target=wasm32-wasi instead of gcc. */
+    bool                wasm;
     Re0EventBus         bus;
 } Re0Compiler;
 

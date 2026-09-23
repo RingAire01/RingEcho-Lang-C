@@ -11,14 +11,14 @@ impl Lexer {
     }
 
     fn advance(self: Lexer) -> i64 {
-        let ch: i64 = self.src[self.pos]
+        let ch: i64 = self.src[self.pos] as i64
         self.pos = self.pos + 1
         return ch
     }
 
     fn skip_ws(self: Lexer) {
         while self.pos < self.len {
-            let ch: i64 = self.peek()
+            let ch: i64 = self.peek() as i64
             if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
                 self.pos = self.pos + 1
             } else {
@@ -31,7 +31,7 @@ impl Lexer {
         self.skip_ws()
         if self.pos >= self.len { return 0 }
 
-        let ch: i64 = self.advance()
+        let ch: i64 = self.advance() as i64
         if ch == 43 { return 2 }
         if ch == 45 { return 3 }
         if ch == 42 { return 4 }

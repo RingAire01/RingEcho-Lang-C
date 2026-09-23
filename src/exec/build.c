@@ -1,4 +1,5 @@
 #include "exec/build.h"
+#include "exec/process.h"
 #include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <time.h>
+#include <fcntl.h>
 #if !defined(RE0_PLATFORM_WINDOWS)
 #include <unistd.h>
 #include <sys/wait.h>
@@ -14,43 +16,46 @@
 
 #if defined(RE0_PLATFORM_WINDOWS)
 #include <direct.h>
+#include <io.h>
+#include <sys/stat.h>
 #include <process.h>
 #include <windows.h>
-#define RE0_MKDIR(path) _mkdir(path)
 #define RE0_PROCESS_ID() ((unsigned long)_getpid())
-#define RE0_TEMP_DIRECTORY "target\\Temp"
 #define RE0_PATH_SEPARATOR "\\"
 #elif defined(RE0_PLATFORM_MACOS)
 #include <sys/stat.h>
 #include <unistd.h>
-#define RE0_MKDIR(path) mkdir((path), 0700)
 #define RE0_PROCESS_ID() ((unsigned long)getpid())
-#define RE0_TEMP_DIRECTORY "target/Temp"
 #define RE0_PATH_SEPARATOR "/"
 #elif defined(RE0_PLATFORM_LINUX)
 #include <sys/stat.h>
 #include <unistd.h>
-#define RE0_MKDIR(path) mkdir((path), 0700)
 #define RE0_PROCESS_ID() ((unsigned long)getpid())
-#define RE0_TEMP_DIRECTORY "target/Temp"
 #define RE0_PATH_SEPARATOR "/"
 #endif
 
-#define RE0_TARGET_DIRECTORY "target"
-#define RE0_TEMP_PATH_CAPACITY 512
 
 static atomic_uint_fast64_t re0_temp_counter = ATOMIC_VAR_INIT(0);
 
-static bool ensure_directory(Re0Build *b, const char *path) {
-    if (RE0_MKDIR(path) == 0 || errno == EEXIST) return true;
-    re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                     "cannot create build directory '%s': error %d", path, errno);
-    return false;
-}
-
 static bool ensure_temp_directory(Re0Build *b) {
-    return ensure_directory(b, RE0_TARGET_DIRECTORY) &&
-           ensure_directory(b, RE0_TEMP_DIRECTORY);
+    if (b->temp_dir[0]) return true;
+#if defined(RE0_PLATFORM_WINDOWS)
+    char root[MAX_PATH];
+    DWORD length = GetTempPathA(sizeof(root), root);
+    if (!length || length >= sizeof(root)) goto failed;
+    if (!GetTempFileNameA(root, "reo", 0, b->temp_dir)) goto failed;
+    if (!DeleteFileA(b->temp_dir) || !CreateDirectoryA(b->temp_dir, NULL)) goto failed;
+#else
+    /* mkdtemp atomically creates a private directory under the system temp root. */
+    snprintf(b->temp_dir, sizeof(b->temp_dir), "/tmp/ringecho-XXXXXX");
+    if (!mkdtemp(b->temp_dir)) goto failed;
+#endif
+    return true;
+failed:
+    b->temp_dir[0] = 0;
+    re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                     "cannot create a private temporary build directory");
+    return false;
 }
 
 static bool make_temp_path(Re0Build *b, char *path, size_t path_size,
@@ -66,7 +71,7 @@ static bool make_temp_path(Re0Build *b, char *path, size_t path_size,
     uint_fast64_t serial = atomic_fetch_add_explicit(&re0_temp_counter, 1,
                                                       memory_order_relaxed);
     int written = snprintf(path, path_size, "%s%s%s_%lu_%lld_%llu%s",
-                           RE0_TEMP_DIRECTORY, RE0_PATH_SEPARATOR, stem,
+                           b->temp_dir, RE0_PATH_SEPARATOR, stem,
                            RE0_PROCESS_ID(),
                            (long long)now.tv_nsec, (unsigned long long)serial, suffix);
     if (written < 0 || (size_t)written >= path_size) {
@@ -79,40 +84,35 @@ static bool make_temp_path(Re0Build *b, char *path, size_t path_size,
 }
 
 void re0_build_init(Re0Build *b, Re0ErrorList *errors) {
+    if (!b) return;
+    memset(b, 0, sizeof(*b));
     b->errors = errors;
     const char *env_cc = getenv("REO_CC");
     b->cc_path = (env_cc && *env_cc) ? env_cc : RE0_PLATFORM_DEFAULT_C_COMPILER;
     b->output_path = NULL;
     b->tmp_file[0] = '\0';
     b->keep_c = true;
+    const char *keep_source = getenv("REO_KEEP_C");
+    if (keep_source && strcmp(keep_source, "0") == 0) b->keep_c = false;
+    else if (keep_source && strcmp(keep_source, "1") != 0)
+        re0_error_append(errors, RE0_WARN, RE0_SPAN_ZERO, NULL,
+                         "invalid REO_KEEP_C; using default 1");
+    b->shared = false;
 }
 
-/* Paths and options are embedded into a quoted CreateProcessA command line
- * (Windows) — a '"' inside would escape the quoting and inject extra args.
- * Such paths are never legitimate (illegal filename chars on Windows). */
-static bool has_embedded_quote(const char *s) {
-    if (!s) return false;
-    return strchr(s, '"') != NULL;
-}
-
-bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path) {
-    if (!b || !c_code || !output_path) return false;
-    if (has_embedded_quote(output_path) || has_embedded_quote(b->cc_path)) {
-        re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                         "output path or compiler path contains a double quote");
-        return false;
-    }
-
-    const char *cc_env_opt = getenv("REO_CC_OPT");
-    if (has_embedded_quote(cc_env_opt)) {
-        re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                         "REO_CC_OPT contains a double quote");
-        return false;
-    }
-
+bool re0_build_write_source(Re0Build *b, const char *c_code) {
+    if (!b || !c_code) return false;
     if (!make_temp_path(b, b->tmp_file, sizeof(b->tmp_file), "re0_codegen", ".c"))
         return false;
-    FILE *f = fopen(b->tmp_file, "wb");
+#if defined(RE0_PLATFORM_WINDOWS)
+    int descriptor = _open(b->tmp_file, _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+    FILE *f = descriptor < 0 ? NULL : _fdopen(descriptor, "wb");
+    if (descriptor >= 0 && !f) _close(descriptor);
+#else
+    int descriptor = open(b->tmp_file, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    FILE *f = descriptor < 0 ? NULL : fdopen(descriptor, "wb");
+    if (descriptor >= 0 && !f) close(descriptor);
+#endif
     if (!f) {
         re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
                          "cannot write temporary C file '%s'", b->tmp_file);
@@ -128,71 +128,21 @@ bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path)
         return false;
     }
 
-    int rc;
+    return true;
+}
+
+bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path) {
+    if (!b || !c_code || !output_path || !*output_path) return false;
+    if (!re0_build_write_source(b, c_code)) return false;
     const char *cc_opt = getenv("REO_CC_OPT");
     if (!cc_opt || !*cc_opt) cc_opt = "-O1";
-#if defined(RE0_PLATFORM_WINDOWS)
-    char args[2048];
-    int args_written = snprintf(args, sizeof(args), "\"%s\" %s -pthread \"%s\" -o \"%s\"",
-                                b->cc_path, cc_opt, b->tmp_file, output_path);
-    if (args_written < 0 || (size_t)args_written >= sizeof(args)) {
-        re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
-                         "compiler arguments exceed limit");
-        if (!b->keep_c) remove(b->tmp_file);
-        return false;
+    const char *arguments[] = {b->cc_path, cc_opt, "-pthread", b->tmp_file,
+                              "-o", output_path, NULL, NULL, NULL};
+    if (b->shared) {
+        arguments[6] = "-shared";
+        arguments[7] = "-fPIC";
     }
-
-    STARTUPINFOA si;
-    ZeroMemory(&si, sizeof(si));
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&pi, sizeof(pi));
-    BOOL ok = CreateProcessA(
-        NULL,                 /* lpApplicationName: NULL to search PATH via command line */
-        args,                 /* lpCommandLine */
-        NULL,                 /* lpProcessAttributes */
-        NULL,                 /* lpThreadAttributes */
-        FALSE,                /* bInheritHandles */
-        0,                    /* dwCreationFlags */
-        NULL,                 /* lpEnvironment */
-        NULL,                 /* lpCurrentDirectory */
-        &si,                  /* lpStartupInfo */
-        &pi                   /* lpProcessInformation */
-    );
-    if (!ok) {
-        re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                         "cannot launch C compiler (error %lu)", GetLastError());
-        if (!b->keep_c) remove(b->tmp_file);
-        return false;
-    }
-
-    WaitForSingleObject(pi.hProcess, INFINITE);
-    DWORD exit_code;
-    if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
-        re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
-                         "cannot get compiler exit code");
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        if (!b->keep_c) remove(b->tmp_file);
-        return false;
-    }
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    rc = (int)exit_code;
-#else
-    char *cc_argv[] = { (char*)b->cc_path, (char*)cc_opt, "-pthread", b->tmp_file, "-o", (char*)output_path, NULL };
-    pid_t cc_pid = fork();
-    if (cc_pid < 0) {
-        re0_error_append(b->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
-                         "cannot launch C compiler");
-        if (!b->keep_c) remove(b->tmp_file);
-        return false;
-    }
-    if (cc_pid == 0) { execvp(b->cc_path, cc_argv); _exit(127); }
-    int cc_st = 0;
-    while (waitpid(cc_pid, &cc_st, 0) < 0 && errno == EINTR) {}
-    rc = WIFEXITED(cc_st) ? WEXITSTATUS(cc_st) : -1;
-#endif
+    int rc = re0_process_run(b->cc_path, arguments);
     if (rc != 0) {
         re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
                          "compilation failed (exit code %d)", rc);
@@ -206,11 +156,28 @@ bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path)
     return true;
 }
 
+bool re0_build_compile_shared(Re0Build *b, const char *c_code, const char *output_path) {
+    if (!b) return false;
+    const bool prev = b->shared;
+    b->shared = true;
+    const bool ok = re0_build_compile(b, c_code, output_path);
+    b->shared = prev;
+    return ok;
+}
+
 bool re0_build_temp_output_path(Re0Build *b, char *path, size_t path_size) {
     return make_temp_path(b, path, path_size, "re0_run",
                           RE0_PLATFORM_EXECUTABLE_SUFFIX);
 }
 
 void re0_build_destroy(Re0Build *b) {
-    (void)b;
+    if (!b) return;
+    if (!b->keep_c && b->tmp_file[0]) remove(b->tmp_file);
+    if (b->temp_dir[0]) {
+#if defined(RE0_PLATFORM_WINDOWS)
+        _rmdir(b->temp_dir);
+#else
+        rmdir(b->temp_dir);
+#endif
+    }
 }

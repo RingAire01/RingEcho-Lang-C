@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 
 #define RE0_INITIAL_STRING_CAPACITY 64u
 #define RE0_MAX_STRING_BYTES (16u * 1024u * 1024u)
@@ -46,7 +47,7 @@ static Re0Pos cur_pos(Re0Lexer *l) {
 }
 
 static Re0Token make_token(Re0Lexer *l, Re0TokenKind kind, Re0Pos start) {
-    Re0Token t;
+    Re0Token t = {0};
     t.kind = kind;
     t.span = re0_span_make(start, cur_pos(l));
     t.str_val = NULL;
@@ -136,160 +137,99 @@ static bool num_buf_check(Re0Lexer *l, int bi, int cap, Re0Pos start) {
     return true;
 }
 
+static void parse_integer_token(Re0Lexer *l, Re0Token *t, const char *text, unsigned radix) {
+    if (!re0_integer_parse(text, radix, &t->integer)) {
+        re0_error_append(l->errors, RE0_ERR_SYNTAX, t->span, l->file_path,
+                         "integer literal is invalid or exceeds 128 bits");
+        l->had_error = true;
+        t->kind = TK_ERROR;
+        return;
+    }
+    uint64_t low = t->integer.low;
+    if (t->integer.negative) low = UINT64_C(0) - low;
+    t->int_val = low <= INT64_MAX ? (int64_t)low : -1 - (int64_t)(UINT64_MAX - low);
+}
+
 static Re0Token scan_number(Re0Lexer *l, Re0Pos start, bool negative, char lead) {
     char buf[RE0_NUMBER_BUF_CAPACITY];
-    int bi = 0;
-    if (negative) buf[bi++] = '-';
-    if (lead) buf[bi++] = lead;
-
-    if (lead == '0' && peek(l)) {
-        char n1 = peek(l);
-        if (n1 == 'x' || n1 == 'X') { advance(l);
-            while (is_hex_digit(peek(l)) || peek(l) == '_') {
-                if (peek(l) != '_') {
-                    if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
-                    buf[bi++] = advance(l);
-                } else {
-                    advance(l);
-                }
-            }
-            buf[bi] = '\0';
-            Re0Token t = make_token(l, TK_NUMBER, start);
-            t.int_val = strtoll(buf, NULL, 16);
-            /* consume type suffix after hex literal */
-            if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
-                char c = peek(l); char n2 = peek_n(l, 1);
-                bool is_suffix = false;
-                if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
-                else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
-                else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
-                if (is_suffix) {
-                    int sstart = l->pos;
-                    while (is_ident_part(peek(l))) advance(l);
-                    int slen = l->pos - sstart;
-                    /* arena-owned: the token outlives the scan (AST keeps
-                     * suffix pointers), so it must die with the arena */
-                    char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
-                    if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
-                }
-            }
-            return t;
-        }
-        if (n1 == 'b' || n1 == 'B') { advance(l);
-            while (is_bin_digit(peek(l)) || peek(l) == '_') {
-                if (peek(l) != '_') {
-                    if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
-                    buf[bi++] = advance(l);
-                } else {
-                    advance(l);
-                }
-            }
-            buf[bi] = '\0';
-            Re0Token t = make_token(l, TK_NUMBER, start);
-            t.int_val = strtoll(buf, NULL, 2);
-            /* consume type suffix after bin literal */
-            if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
-                char c = peek(l); char n2 = peek_n(l, 1);
-                bool is_suffix = false;
-                if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
-                else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
-                else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
-                if (is_suffix) {
-                    int sstart = l->pos;
-                    while (is_ident_part(peek(l))) advance(l);
-                    int slen = l->pos - sstart;
-                    char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
-                    if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
-                }
-            }
-            return t;
-        }
-        if (n1 == 'o' || n1 == 'O') { advance(l);
-            while (is_oct_digit(peek(l)) || peek(l) == '_') {
-                if (peek(l) != '_') {
-                    if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
-                    buf[bi++] = advance(l);
-                } else {
-                    advance(l);
-                }
-            }
-            buf[bi] = '\0';
-            Re0Token t = make_token(l, TK_NUMBER, start);
-            t.int_val = strtoll(buf, NULL, 8);
-            /* consume type suffix after oct literal */
-            if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
-                char c = peek(l); char n2 = peek_n(l, 1);
-                bool is_suffix = false;
-                if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
-                else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
-                else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
-                if (is_suffix) {
-                    int sstart = l->pos;
-                    while (is_ident_part(peek(l))) advance(l);
-                    int slen = l->pos - sstart;
-                    char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
-                    if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; t.suffix = suf; }
-                }
-            }
-            return t;
-        }
+    int length = 0;
+    if (negative) buf[length++] = '-';
+    unsigned radix = 10;
+    if (lead) buf[length++] = lead;
+    else if (peek(l) == '0') buf[length++] = advance(l);
+    if (length > 0 && buf[length - 1] == '0') {
+        char prefix = peek(l);
+        if (prefix == 'x' || prefix == 'X') radix = 16;
+        else if (prefix == 'b' || prefix == 'B') radix = 2;
+        else if (prefix == 'o' || prefix == 'O') radix = 8;
+        if (radix != 10) { advance(l); length--; }
     }
-
-    bool is_float = false;
-    while (is_digit(peek(l)) || peek(l) == '_') {
-        if (peek(l) != '_') {
-            if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
-            buf[bi++] = advance(l);
-        } else {
-            advance(l);
-        }
-    }
-    if (peek(l) == '.' && peek_n(l, 1) != '.') {
-        if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) goto finish_decimal;
-        buf[bi++] = advance(l);
-        is_float = true;
-        while (is_digit(peek(l)) || peek(l) == '_') {
-            if (peek(l) != '_') {
-                if (!num_buf_check(l, bi, RE0_NUMBER_BUF_CAPACITY, start)) break;
-                buf[bi++] = advance(l);
-            } else {
-                advance(l);
-            }
-        }
-    }
-finish_decimal:
-    /* Type suffix: u8 u16 u32 u64 u128 usize i8 i16 i32 i64 i128 isize f32 f64 f */
-    if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
+    int digit_start = negative ? 1 : 0;
+    while (peek(l)) {
         char c = peek(l);
-        char n2 = peek_n(l, 1);
-        bool is_suffix = false;
-        if (c == 'f' && !is_ident_part(n2)) is_suffix = true;
-        else if ((c == 'u' || c == 'i') && is_digit(n2)) is_suffix = true;
-        else if ((c == 'u' || c == 'i') && (n2 == 's' || n2 == 'S')) is_suffix = true;
-
-        if (is_suffix) {
-            /* Record suffix start position, then consume all suffix chars */
-            int sstart = l->pos;
-            while (is_ident_part(peek(l))) advance(l);
-            int slen = l->pos - sstart;
-            char *suf = re0_arena_alloc(l->arena, (size_t)slen + 1);
-            if (suf) { memcpy(suf, l->source + sstart, slen); suf[slen] = '\0'; }
-            if (c == 'f') is_float = true;
-
-            buf[bi] = '\0';
-            Re0Token t = make_token(l, is_float ? TK_FLOAT : TK_NUMBER, start);
-            if (is_float) t.float_val = atof(buf);
-            else t.int_val = atoll(buf);
-            t.suffix = suf;
-            return t;
+        bool digit = radix == 16 ? is_hex_digit(c) : radix == 8 ? is_oct_digit(c) :
+                     radix == 2 ? is_bin_digit(c) : is_digit(c);
+        if (!digit && c != '_') break;
+        if (c == '_') { advance(l); continue; }
+        if (!num_buf_check(l, length, RE0_NUMBER_BUF_CAPACITY, start))
+            return make_token(l, TK_ERROR, start);
+        buf[length++] = advance(l);
+    }
+    bool floating = false;
+    if (radix == 10 && peek(l) == '.' && peek_n(l, 1) != '.') {
+        floating = true;
+        if (!num_buf_check(l, length, RE0_NUMBER_BUF_CAPACITY, start)) return make_token(l, TK_ERROR, start);
+        buf[length++] = advance(l);
+        while (is_digit(peek(l)) || peek(l) == '_') {
+            if (peek(l) == '_') { advance(l); continue; }
+            if (!num_buf_check(l, length, RE0_NUMBER_BUF_CAPACITY, start)) return make_token(l, TK_ERROR, start);
+            buf[length++] = advance(l);
         }
     }
-    buf[bi] = '\0';
-
-    Re0Token t = make_token(l, is_float ? TK_FLOAT : TK_NUMBER, start);
-    if (is_float) t.float_val = atof(buf);
-    else t.int_val = atoll(buf);
-    return t;
+    if (radix == 10 && (peek(l) == 'e' || peek(l) == 'E')) {
+        floating = true;
+        if (!num_buf_check(l, length, RE0_NUMBER_BUF_CAPACITY, start)) return make_token(l, TK_ERROR, start);
+        buf[length++] = advance(l);
+        if (peek(l) == '+' || peek(l) == '-') {
+            if (!num_buf_check(l, length, RE0_NUMBER_BUF_CAPACITY, start)) return make_token(l, TK_ERROR, start);
+            buf[length++] = advance(l);
+        }
+        while (is_digit(peek(l))) {
+            if (!num_buf_check(l, length, RE0_NUMBER_BUF_CAPACITY, start)) return make_token(l, TK_ERROR, start);
+            buf[length++] = advance(l);
+        }
+    }
+    buf[length] = 0;
+    char *suffix = NULL;
+    if (peek(l) == 'u' || peek(l) == 'i' || peek(l) == 'f') {
+        int begin = l->pos;
+        while (is_ident_part(peek(l))) advance(l);
+        size_t size = (size_t)(l->pos - begin);
+        suffix = re0_arena_alloc(l->arena, size + 1);
+        if (!suffix) {
+            re0_error_append(l->errors, RE0_ERR_INTERNAL, re0_span_make(start, cur_pos(l)),
+                             l->file_path, "cannot allocate numeric suffix");
+            l->had_error = true;
+            return make_token(l, TK_ERROR, start);
+        }
+        memcpy(suffix, l->source + begin, size); suffix[size] = 0;
+        if (suffix[0] == 'f') floating = true;
+    }
+    Re0Token token = make_token(l, floating ? TK_FLOAT : TK_NUMBER, start);
+    token.suffix = suffix;
+    if (length == digit_start) {
+        re0_error_append(l->errors, RE0_ERR_SYNTAX, token.span, l->file_path, "missing digits in numeric literal");
+        l->had_error = true; token.kind = TK_ERROR;
+    } else if (floating) {
+        char *end = NULL;
+        errno = 0;
+        token.float_val = strtod(buf, &end);
+        if (radix != 10 || !end || *end || errno == ERANGE) {
+            re0_error_append(l->errors, RE0_ERR_SYNTAX, token.span, l->file_path, "invalid or out-of-range floating literal");
+            l->had_error = true; token.kind = TK_ERROR;
+        }
+    } else parse_integer_token(l, &token, buf, radix);
+    return token;
 }
 
 static Re0Token scan_string(Re0Lexer *l, Re0Pos start) {
@@ -569,6 +509,9 @@ bool re0_lexer_tokenize(Re0Lexer *l, const char *source, const char *file_path) 
         l->bol = 3;
     }
 
+    /* Free any token vector from a previous file (recursive import reuses
+     * this lexer; re-init without freeing would leak the prior vector). */
+    re0_stream_free(&l->stream);
     Re0TokenVec_init(&l->stream.tokens);
     l->stream.cursor = 0;
 

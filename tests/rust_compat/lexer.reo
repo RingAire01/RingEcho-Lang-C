@@ -11,14 +11,14 @@ impl Lexer {
     }
 
     fn advance(self: Lexer) -> i64 {
-        let ch: i64 = self.src[self.pos]
+        let ch: i64 = self.src[self.pos] as i64
         self.pos = self.pos + 1
         return ch
     }
 
     fn skip_ws(self: Lexer) {
         while self.pos < self.len {
-            let ch: i64 = self.peek()
+            let ch: i64 = self.peek() as i64
             if ch == 32 || ch == 10 || ch == 9 {
                 self.pos = self.pos + 1
             } else {
@@ -28,7 +28,7 @@ impl Lexer {
     }
 
     fn read_ident(self: Lexer) -> str {
-        let ch: i64 = self.advance()
+        let ch: i64 = self.advance() as i64
         let s: str = char_to_str(ch)
         while is_alnum(self.peek()) {
             let c: str = char_to_str(self.advance())
@@ -38,7 +38,7 @@ impl Lexer {
     }
 
     fn read_number(self: Lexer) -> i64 {
-        let ch: i64 = self.advance()
+        let ch: i64 = self.advance() as i64
         let n: i64 = ch - 48
         while is_digit(self.peek()) {
             let d: i64 = self.advance() - 48

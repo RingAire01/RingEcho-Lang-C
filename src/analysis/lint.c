@@ -9,8 +9,16 @@
 #define MAX_NESTING RE0_MAX_NESTING
 
 typedef struct { char name[128]; bool used; int line; } LintVar;
-static LintVar lint_vars[MAX_LINT_VARS];
-static int lint_var_count = 0;
+#if defined(_MSC_VER)
+static __declspec(thread) LintVar lint_vars[MAX_LINT_VARS];
+static __declspec(thread) int lint_var_count = 0;
+#elif defined(__GNUC__) || defined(__clang__)
+static __thread LintVar lint_vars[MAX_LINT_VARS];
+static __thread int lint_var_count = 0;
+#else
+static _Thread_local LintVar lint_vars[MAX_LINT_VARS];
+static _Thread_local int lint_var_count = 0;
+#endif
 
 static void lint_var_add(const char *name, int line) {
     if (lint_var_count >= MAX_LINT_VARS) return;

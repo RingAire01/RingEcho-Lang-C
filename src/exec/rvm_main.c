@@ -233,7 +233,11 @@ static int cmd_use(const char *version) {
     CreateSymbolicLinkA(current_link, version_dir, 0);
 #else
     unlink(current_link);
-    symlink(version_dir, current_link);
+    if (symlink(version_dir, current_link) != 0) {
+        fprintf(stderr, "cannot create symlink '%s' -> '%s': %s\n",
+                current_link, version_dir, strerror(errno));
+        return 1;
+    }
 #endif
 
     printf("Now using RingEcho %s\n", version);

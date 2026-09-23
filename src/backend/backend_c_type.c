@@ -4,24 +4,24 @@
  * type mapping + expression classification + literal writers. */
 
 /* Global backend state (declared in backend_c_internal.h). */
-Re0CVarType var_types[MAX_VAR_TYPES];
-int var_type_count = 0;
-FnRetSlot g_fn_rets[MAX_FN_RETS];
-int g_fn_ret_count = 0;
-StructFieldSlot g_struct_fields[MAX_STRUCT_FIELDS];
-int g_struct_field_count = 0;
-LambdaSlot g_lambdas[MAX_LAMBDAS];
-int g_lambda_count = 0;
-int g_lambda_counter = 0;
-size_t g_fwd_insert_pos = 0;
-GenericStructSlot g_generic_structs[MAX_GENERIC_STRUCTS];
-int g_generic_struct_count = 0;
-GenericFnSlot g_generic_fns[MAX_GENERIC_FNS];
-int g_generic_fn_count = 0;
-InstantiatedSlot g_instantiated[MAX_INSTANTIATED];
-int g_instantiated_count = 0;
-PendingInst g_pending_list[MAX_INSTANTIATED];
-int g_pending_count = 0;
+RE0_THREAD_LOCAL Re0CVarType var_types[MAX_VAR_TYPES];
+RE0_THREAD_LOCAL int var_type_count = 0;
+RE0_THREAD_LOCAL FnRetSlot g_fn_rets[MAX_FN_RETS];
+RE0_THREAD_LOCAL int g_fn_ret_count = 0;
+RE0_THREAD_LOCAL StructFieldSlot g_struct_fields[MAX_STRUCT_FIELDS];
+RE0_THREAD_LOCAL int g_struct_field_count = 0;
+RE0_THREAD_LOCAL LambdaSlot g_lambdas[MAX_LAMBDAS];
+RE0_THREAD_LOCAL int g_lambda_count = 0;
+RE0_THREAD_LOCAL int g_lambda_counter = 0;
+RE0_THREAD_LOCAL size_t g_fwd_insert_pos = 0;
+RE0_THREAD_LOCAL GenericStructSlot g_generic_structs[MAX_GENERIC_STRUCTS];
+RE0_THREAD_LOCAL int g_generic_struct_count = 0;
+RE0_THREAD_LOCAL GenericFnSlot g_generic_fns[MAX_GENERIC_FNS];
+RE0_THREAD_LOCAL int g_generic_fn_count = 0;
+RE0_THREAD_LOCAL InstantiatedSlot g_instantiated[MAX_INSTANTIATED];
+RE0_THREAD_LOCAL int g_instantiated_count = 0;
+RE0_THREAD_LOCAL PendingInst g_pending_list[MAX_INSTANTIATED];
+RE0_THREAD_LOCAL int g_pending_count = 0;
 
 void track_var(const char *name, const char *ctype) {
     if (var_type_count >= MAX_VAR_TYPES) return;
@@ -125,15 +125,44 @@ const char *struct_field_c_type(const char *struct_name, const char *field) {
 #define MAX_GENERIC_FNS RE0_MAX_GENERIC_FNS
 
 
+static const char *result_c_type(Re0Type *type) {
+    static const char *names[] = {"__reo_result_i8", "__reo_result_i16", "__reo_result_i32", "__reo_result_i64", "__reo_result_i128", "__reo_result_isize", "__reo_result_u8", "__reo_result_u16", "__reo_result_u32", "__reo_result_u64", "__reo_result_u128", "__reo_result_usize", "__reo_result_f32", "__reo_result_f64", "__reo_result_bool", "__reo_result_char", "__reo_result_str"};
+    if (!type || type->kind != RE0_TYPE_GENERIC || !type->generic.name ||
+        strcmp(type->generic.name, "Result") != 0 || type->generic.arg_count != 2 ||
+        type->generic.args[1]->kind != RE0_TYPE_I64) return NULL;
+    Re0Type *payload = type->generic.args[0];
+    if (payload->kind == RE0_TYPE_ARRAY && payload->array.inner && payload->array.inner->kind < RE0_TYPE_STR) {
+        static const char *arrays[] = {"__reo_result_array_i8", "__reo_result_array_i16", "__reo_result_array_i32", "__reo_result_array_i64", "__reo_result_array_i128", "__reo_result_array_isize", "__reo_result_array_u8", "__reo_result_array_u16", "__reo_result_array_u32", "__reo_result_array_u64", "__reo_result_array_u128", "__reo_result_array_usize", "__reo_result_array_f32", "__reo_result_array_f64", "__reo_result_array_bool", "__reo_result_array_char"};
+        return arrays[payload->array.inner->kind];
+    }
+    Re0TypeKind kind = payload->kind;
+    if (kind > RE0_TYPE_STR || type->generic.args[1]->kind != RE0_TYPE_I64) return NULL;
+    return names[kind];
+}
+
 const char *reo_type_to_c(const char *t) {
     if (!t) return "int64_t";
+    if (strncmp(t, "Result", 6) == 0 && strchr(t, '<')) {
+        Re0Type *parsed = re0_type_parse(t);
+        const char *result = result_c_type(parsed);
+        re0_type_free_tree(parsed);
+        if (result) return result;
+    }
     /* Compound type annotation (parser may rebuild with spaces):
      * skip leading whitespace then dispatch by first char/prefix,
      * avoiding Vec, [T;N], &T, ptr etc. falling into C as illegal code. */
     {
         const char *p = t;
         while (*p == ' ' || *p == '\t') p++;
-        if (*p == '[') return "__reo_arr_t";   /* [T; N] / [T] -> fat-pointer array with bounds checks */
+        if (*p == '[') {
+            Re0Type *array = re0_type_parse(p);
+            Re0Type *element = array && array->kind == RE0_TYPE_ARRAY ? array->array.inner :
+                array && array->kind == RE0_TYPE_SLICE ? array->slice.inner : NULL;
+            bool wide = element && (element->kind == RE0_TYPE_I128 || element->kind == RE0_TYPE_U128);
+            bool floating = element && re0_type_is_float(element->kind);
+            re0_type_free_tree(array);
+            return wide ? "__reo_arr128_t" : floating ? "__reo_arrf_t" : "__reo_arr_t";
+        }   /* [T; N] / [T] -> fat-pointer array with bounds checks */
         if (*p == '&') return "int64_t";    /* &T / &mut T: boxed reference */
         if (*p == '*') return "void*";      /* *T ?raw pointer */
         if (strncmp(p, "Vec", 3) == 0) {
@@ -158,7 +187,7 @@ const char *reo_type_to_c(const char *t) {
     if (strcmp(t, "f32") == 0)   return "float";
     if (strcmp(t, "f64") == 0)   return "double";
     if (strcmp(t, "bool") == 0)  return "bool";
-    if (strcmp(t, "char") == 0)  return "char";
+    if (strcmp(t, "char") == 0)  return "uint8_t";
     if (strcmp(t, "str") == 0)   return "const char*";
     if (strcmp(t, "vec") == 0)   return "__reo_vec_t*";
     if (strcmp(t, "ptr") == 0)   return "void*";
@@ -194,7 +223,8 @@ bool expr_is_string(Re0Expr *e) {
     if (e->kind == EXPR_BINARY && e->binary.op == BINOP_ADD &&
         (expr_is_string(e->binary.left) || expr_is_string(e->binary.right)))
         return true;
-    return false;
+    char t[128];
+    return infer_expr_c_type(e, t, sizeof(t)) && strcmp(t, "const char*") == 0;
 }
 
 /* whether an identifier refers to a fat-pointer array variable
@@ -202,7 +232,7 @@ bool expr_is_string(Re0Expr *e) {
 bool expr_is_array_var(Re0Expr *e) {
     if (!e || e->kind != EXPR_IDENT) return false;
     const char *t = var_c_type(e->ident.name);
-    return t && (strcmp(t, "__reo_arr_t") == 0 || strcmp(t, "__reo_arrf_t") == 0);
+    return t && (strcmp(t, "__reo_arr_t") == 0 || strcmp(t, "__reo_arrf_t") == 0 || strcmp(t, "__reo_arr128_t") == 0);
 }
 
 /* whether expression is a vec (__reo_vec_t*): used for for-in Vec iteration */
@@ -226,15 +256,13 @@ bool expr_is_pointer_obj(Re0Expr *e) {
 }
 
 bool expr_is_u128(Re0Expr *e) {
-    if (!e || e->kind != EXPR_IDENT) return false;
-    const char *t = var_c_type(e->ident.name);
-    return t && strcmp(t, "unsigned __int128") == 0;
+    char t[128];
+    return infer_expr_c_type(e, t, sizeof(t)) && strcmp(t, "unsigned __int128") == 0;
 }
 
 bool expr_is_i128(Re0Expr *e) {
-    if (!e || e->kind != EXPR_IDENT) return false;
-    const char *t = var_c_type(e->ident.name);
-    return t && strcmp(t, "__int128") == 0;
+    char t[128];
+    return infer_expr_c_type(e, t, sizeof(t)) && strcmp(t, "__int128") == 0;
 }
 
 /* pick the wider of two integer C type names for mixed-width arithmetic
@@ -263,10 +291,36 @@ const char *c_wider_int_type(const char *a, const char *b) {
 
 bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
     if (!e || !type || type_size == 0) return false;
+    if (e->resolved_type && (e->resolved_type->kind == RE0_TYPE_ARRAY || e->resolved_type->kind == RE0_TYPE_SLICE)) {
+        Re0Type *element = e->resolved_type->kind == RE0_TYPE_ARRAY ? e->resolved_type->array.inner : e->resolved_type->slice.inner;
+        if (element && e->kind == EXPR_TRY && element->kind < RE0_TYPE_STR) {
+            snprintf(type, type_size, "%s", re0_type_is_float(element->kind) ? "__reo_arrf_t" :
+                     (element->kind == RE0_TYPE_I128 || element->kind == RE0_TYPE_U128) ? "__reo_arr128_t" : "__reo_arr_t");
+            return true;
+        }
+        if (element && (element->kind == RE0_TYPE_I128 || element->kind == RE0_TYPE_U128)) {
+            snprintf(type, type_size, "__reo_arr128_t");
+            return true;
+        }
+    }
+    const char *result_name = result_c_type(e->resolved_type);
+    if (result_name) { snprintf(type, type_size, "%s", result_name); return true; }
+    if (e->resolved_type && e->resolved_type->kind <= RE0_TYPE_STR &&
+        (e->kind != EXPR_IDENT || !var_c_type(e->ident.name) ||
+         !strchr(var_c_type(e->ident.name), '*'))) {
+        const char *resolved = reo_type_to_c(re0_type_kind_name(e->resolved_type->kind));
+        snprintf(type, type_size, "%s", resolved);
+        return true;
+    }
     const char *known = NULL;
+    /* Stack buffers that `known` may point at live for the whole function
+     * (not just their inner case block), so the final snprintf reads them
+     * safely. Previously `lt`/`rt`/`ename` were declared inside their case
+     * blocks and `known` dangled after the block ended (stack-use-after-scope). */
+    char lt[128], rt[128], ename[128], inferred[256];
     switch (e->kind) {
-        case EXPR_INT: known = "int64_t"; break;
-        case EXPR_FLOAT: known = "double"; break;
+        case EXPR_INT: known = reo_type_to_c(e->int_lit.suffix); break;
+        case EXPR_FLOAT: known = e->float_lit.suffix ? reo_type_to_c(e->float_lit.suffix) : "double"; break;
         case EXPR_BOOL: known = "bool"; break;
         case EXPR_CHAR: known = "char"; break;
         case EXPR_STRING: known = "const char*"; break;
@@ -274,7 +328,6 @@ bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
         case EXPR_STRUCT_INIT:
             if (find_generic_struct(e->struct_init.name) &&
                 e->struct_init.field_count > 0) {
-                char inferred[256];
                 if (infer_expr_c_type(e->struct_init.fields[0].value, inferred, sizeof(inferred))) {
                     snprintf(type, type_size, "%s_%s", e->struct_init.name, inferred);
                     type[type_size - 1] = '\0';
@@ -319,7 +372,6 @@ bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             /* enum constructor */
             if (!known && e->call.callee && e->call.callee->kind == EXPR_IDENT &&
                 strchr(e->call.callee->ident.name, ':')) {
-                char ename[128];
                 const char *colon = strchr(e->call.callee->ident.name, ':');
                 size_t elen = (size_t)(colon - e->call.callee->ident.name);
                 if (elen < sizeof(ename)) {
@@ -333,14 +385,12 @@ bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
         case EXPR_ARRAY_REPEAT: {
             /* fat-pointer arrays: element type selects __reo_arr_t/__reo_arrf_t */
             if (e->kind == EXPR_ARRAY && e->array.count > 0) {
-                char et[128];
-                if (infer_expr_c_type(e->array.elems[0], et, sizeof(et)) &&
-                    (strcmp(et, "float") == 0 || strcmp(et, "double") == 0))
+                if (infer_expr_c_type(e->array.elems[0], lt, sizeof(lt)) &&
+                    (strcmp(lt, "float") == 0 || strcmp(lt, "double") == 0))
                     { known = "__reo_arrf_t"; break; }
             } else if (e->kind == EXPR_ARRAY_REPEAT && e->array_repeat.value) {
-                char et[128];
-                if (infer_expr_c_type(e->array_repeat.value, et, sizeof(et)) &&
-                    (strcmp(et, "float") == 0 || strcmp(et, "double") == 0))
+                if (infer_expr_c_type(e->array_repeat.value, lt, sizeof(lt)) &&
+                    (strcmp(lt, "float") == 0 || strcmp(lt, "double") == 0))
                     { known = "__reo_arrf_t"; break; }
             }
             known = "__reo_arr_t";
@@ -348,10 +398,9 @@ bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
         }
         case EXPR_INDEX: {
             /* element access: follow the collection's element type */
-            char base[128];
-            if (infer_expr_c_type(e->index.target, base, sizeof(base))) {
-                if (strcmp(base, "__reo_arrf_t") == 0) { known = "double"; break; }
-                if (strcmp(base, "__reo_arr_t") == 0) { known = "int64_t"; break; }
+            if (infer_expr_c_type(e->index.target, lt, sizeof(lt))) {
+                if (strcmp(lt, "__reo_arrf_t") == 0) { known = "double"; break; }
+                if (strcmp(lt, "__reo_arr_t") == 0) { known = "int64_t"; break; }
             }
             known = "int64_t";
             break;
@@ -360,10 +409,17 @@ bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
             known = reo_type_to_c(e->cast.target_type);
             break;
         case EXPR_SELECT: {
+            Re0Type *object_type = e->select.object ? e->select.object->resolved_type : NULL;
+            if (object_type && object_type->kind == RE0_TYPE_GENERIC &&
+                strcmp(object_type->generic.name, "Result") == 0 && strcmp(e->select.field, "value") == 0 &&
+                object_type->generic.args[0]->kind == RE0_TYPE_ARRAY) {
+                Re0Type *element = object_type->generic.args[0]->array.inner;
+                known = element && re0_type_is_float(element->kind) ? "__reo_arrf_t" : "__reo_arr_t";
+                break;
+            }
             /* a.field: infer a's struct type, then look up field's C type */
-            char obj_type[128];
-            if (infer_expr_c_type(e->select.object, obj_type, sizeof(obj_type))) {
-                const char *ft = struct_field_c_type(obj_type, e->select.field);
+            if (infer_expr_c_type(e->select.object, lt, sizeof(lt))) {
+                const char *ft = struct_field_c_type(lt, e->select.field);
                 if (ft) known = ft;
             }
             break;
@@ -381,7 +437,6 @@ bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size) {
                 e->binary.op != BINOP_MUL && e->binary.op != BINOP_DIV &&
                 e->binary.op != BINOP_MOD)
                 break; /* comparisons/logic yield bool via caller default */
-            char lt[128], rt[128];
             bool has_l = infer_expr_c_type(e->binary.left, lt, sizeof(lt));
             bool has_r = infer_expr_c_type(e->binary.right, rt, sizeof(rt));
             /* untyped integer literals inherit the other side's type

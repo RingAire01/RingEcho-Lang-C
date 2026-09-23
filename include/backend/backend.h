@@ -20,6 +20,9 @@ struct Re0Codegen {
     int last_reg;
     Re0GcMode gc_mode;
     bool had_error;
+    /* When false (library mode), the backend emits no `int main()` entry
+     * point so the generated C can be linked into a shared library. */
+    bool emit_main;
 };
 
 typedef struct Re0Backend {

@@ -19,8 +19,8 @@ Re0Stmt *find_generic_struct(const char *name) {
 }
 
 /* set of instantiated struct mangled names (shared via backend_c_internal.h) */
-char g_struct_instances[MAX_INSTANTIATED][256];
-int g_struct_instance_count = 0;
+RE0_THREAD_LOCAL char g_struct_instances[MAX_INSTANTIATED][256];
+RE0_THREAD_LOCAL int g_struct_instance_count = 0;
 
 bool struct_already_instantiated(const char *mangled) {
     for (int i = 0; i < g_struct_instance_count; i++)

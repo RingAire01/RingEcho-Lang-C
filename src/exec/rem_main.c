@@ -360,9 +360,9 @@ static int cmd_update(void) {
         struct dirent *de;
         while ((de = readdir(d)) != NULL) {
             if (de->d_name[0] == '.') continue;
-            char sub[600];
+            char sub[1024];
             snprintf(sub, sizeof(sub), "%s/%s", pkg_dir, de->d_name);
-            char gitdir[640];
+            char gitdir[1100];
             snprintf(gitdir, sizeof(gitdir), "%s/.git", sub);
             struct stat gst;
             if (stat(gitdir, &gst) == 0) {

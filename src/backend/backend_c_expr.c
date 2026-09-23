@@ -6,10 +6,33 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
     Re0Buffer *b = &c->output;
     if (!e) { re0_buffer_write_str(b, "(void)0"); return 0; }
     switch (e->kind) {
-        case EXPR_INT: re0_buffer_write_fmt(b, "%lldLL", (long long)e->int_lit.val); break;
-        case EXPR_FLOAT: re0_buffer_write_fmt(b, "%g", e->float_lit.val); break;
+        case EXPR_INT: {
+            Re0Integer value = e->int_lit.integer;
+            Re0TypeKind kind = e->resolved_type ? e->resolved_type->kind : RE0_TYPE_I64;
+            const char *type = reo_type_to_c(re0_type_kind_name(kind));
+            if (value.high || !re0_integer_fits(value, 64, true)) {
+                re0_buffer_write_fmt(b, "((%s)(", type);
+                if (value.negative) re0_buffer_write_str(b, "-1 - (__reo_i128)(");
+                if (value.negative) {
+                    if (value.low == 0) value.high--;
+                    value.low--;
+                }
+                re0_buffer_write_fmt(b, "(((__reo_u128)%lluULL << 64) | (__reo_u128)%lluULL)",
+                    (unsigned long long)value.high, (unsigned long long)value.low);
+                if (e->int_lit.integer.negative) re0_buffer_write_char(b, ')');
+                re0_buffer_write_str(b, "))");
+            } else if (e->int_lit.val == INT64_MIN) {
+                re0_buffer_write_fmt(b, "((%s)(-9223372036854775807LL - 1))", type);
+            } else re0_buffer_write_fmt(b, "((%s)%lldLL)", type, (long long)e->int_lit.val);
+            break;
+        }
+        case EXPR_FLOAT:
+            if (e->resolved_type && e->resolved_type->kind == RE0_TYPE_F32)
+                re0_buffer_write_fmt(b, "__reo_conv_f32(%a)", e->float_lit.val);
+            else re0_buffer_write_fmt(b, "((double)%a)", e->float_lit.val);
+            break;
         case EXPR_BOOL: re0_buffer_write_str(b, e->bool_lit.val ? "1" : "0"); break;
-        case EXPR_CHAR: c_write_char_literal(b, e->char_lit.val); break;
+        case EXPR_CHAR: re0_buffer_write_fmt(b, "((uint8_t)%u)", (unsigned char)e->char_lit.val); break;
         case EXPR_STRING: c_write_string_literal(b, e->str_lit.val); break;
         case EXPR_IDENT: {
             char ename[128], vname[128];
@@ -27,55 +50,21 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
         case EXPR_UNIT: re0_buffer_write_str(b, "0"); break;
         case EXPR_BINARY: {
             Re0BinOpKind op = e->binary.op;
-            /* constant folding: compute at compile time when both sides are integer literals */
-            if (e->binary.left->kind == EXPR_INT && e->binary.right->kind == EXPR_INT) {
-                int64_t l = e->binary.left->int_lit.val;
-                int64_t r = e->binary.right->int_lit.val;
-                int64_t folded;
-                bool can_fold = true;
-                switch (op) {
-                    case BINOP_ADD: folded = l + r; break;
-                    case BINOP_SUB: folded = l - r; break;
-                    case BINOP_MUL: folded = l * r; break;
-                    case BINOP_DIV: if (r == 0) { can_fold = false; break; } folded = l / r; break;
-                    case BINOP_MOD: if (r == 0) { can_fold = false; break; } folded = l % r; break;
-                    case BINOP_EQ: folded = l == r; break;
-                    case BINOP_NE: folded = l != r; break;
-                    case BINOP_LT: folded = l < r; break;
-                    case BINOP_LE: folded = l <= r; break;
-                    case BINOP_GT: folded = l > r; break;
-                    case BINOP_GE: folded = l >= r; break;
-                    case BINOP_AND: folded = l && r; break;
-                    case BINOP_OR: folded = l || r; break;
-                    case BINOP_BAND: folded = l & r; break;
-                    case BINOP_BOR: folded = l | r; break;
-                    case BINOP_BXOR: folded = l ^ r; break;
-                    case BINOP_SHL: folded = l << r; break;
-                    case BINOP_SHR: folded = l >> r; break;
-                    default: can_fold = false; break;
-                }
-                if (can_fold) {
-                    re0_buffer_write_fmt(b, "%lldLL", (long long)folded);
-                    break;
-                }
-            }
-            /* safety-checked operations */
-            if (op == BINOP_DIV || op == BINOP_MOD) {
-                const char *fn = op == BINOP_DIV ? "__reo_safe_div" : "__reo_safe_mod";
-                re0_buffer_write_fmt(b, "%s(", fn);
+            Re0TypeKind result_kind = c_expr_scalar_kind(e);
+            int operation = op == BINOP_ADD ? 0 : op == BINOP_SUB ? 1 : op == BINOP_MUL ? 2 :
+                op == BINOP_DIV ? 3 : op == BINOP_MOD ? 4 : op == BINOP_SHL ? 5 : op == BINOP_SHR ? 6 : -1;
+            if (operation >= 0 && re0_type_is_integer(result_kind)) {
+                const char *type = reo_type_to_c(re0_type_kind_name(result_kind));
+                bool sign = re0_type_is_signed(result_kind);
+                re0_buffer_write_fmt(b, "((%s)(%s__reo_conv_binary((__reo_u128)(", type,
+                                        sign ? "__reo_conv_signed(" : "");
                 c_gen_expr(c, e->binary.left);
-                re0_buffer_write_str(b, ", ");
+                re0_buffer_write_str(b, "), (__reo_u128)(");
                 c_gen_expr(c, e->binary.right);
-                re0_buffer_write_char(b, ')');
-                break;
-            }
-            if (op == BINOP_SHL || op == BINOP_SHR) {
-                const char *fn = op == BINOP_SHL ? "__reo_safe_shl" : "__reo_safe_shr";
-                re0_buffer_write_fmt(b, "%s(", fn);
-                c_gen_expr(c, e->binary.left);
-                re0_buffer_write_str(b, ", ");
-                c_gen_expr(c, e->binary.right);
-                re0_buffer_write_char(b, ')');
+                re0_buffer_write_fmt(b, "), sizeof(%s) * CHAR_BIT, %s, %d)", type,
+                                        sign ? "true" : "false", operation);
+                if (sign) re0_buffer_write_fmt(b, ", sizeof(%s) * CHAR_BIT)", type);
+                re0_buffer_write_str(b, "))");
                 break;
             }
             /* string concatenation: str + str -> __reo_str_concat (either operand being str
@@ -95,6 +84,18 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             break;
         }
         case EXPR_UNARY: {
+            Re0TypeKind kind = c_expr_scalar_kind(e);
+            if (e->unary.op == UNOP_NEG && re0_type_is_integer(kind)) {
+                const char *type = reo_type_to_c(re0_type_kind_name(kind));
+                bool sign = re0_type_is_signed(kind);
+                re0_buffer_write_fmt(b, "((%s)(%s((__reo_u128)0 - (__reo_u128)(", type,
+                                        sign ? "__reo_conv_signed(" : "");
+                c_gen_expr(c, e->unary.operand);
+                re0_buffer_write_str(b, "))");
+                if (sign) re0_buffer_write_fmt(b, ", sizeof(%s) * CHAR_BIT)", type);
+                re0_buffer_write_str(b, "))");
+                break;
+            }
             const char *operator = NULL;
             switch (e->unary.op) {
                 case UNOP_NEG: operator = "-"; break;
@@ -184,17 +185,17 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                     const char *fmt, *cast;
                     if (expr_is_string(arg)) { fmt = "%s"; cast = "(char*)"; }
                     else if (expr_is_float(arg)) { fmt = "%g"; cast = "(double)"; }
-                    else if (expr_is_u128(arg)) {
-                        re0_buffer_write_str(b, "__reo_print_u128(");
+                    else if (expr_is_u128(arg) || expr_is_i128(arg)) {
+                        re0_buffer_write_fmt(b, "printf(\"%%s%s\", %s(",
+                            strcmp(fn, "println") == 0 ? "\\n" : "",
+                            expr_is_u128(arg) ? "__reo_conv_unsigned_string" : "__reo_conv_signed_string");
                         c_gen_expr(c, arg);
-                        re0_buffer_write_str(b, ")");
+                        re0_buffer_write_str(b, ")), fflush(stdout)");
                         break;
                     }
-                    else if (expr_is_i128(arg)) {
-                        re0_buffer_write_str(b, "__reo_print_i128(");
-                        c_gen_expr(c, arg);
-                        re0_buffer_write_str(b, ")");
-                        break;
+                    else if (re0_type_is_integer(c_expr_scalar_kind(arg)) &&
+                             !re0_type_is_signed(c_expr_scalar_kind(arg))) {
+                        fmt = "%llu"; cast = "(unsigned long long)";
                     }
                     else { fmt = "%lld"; cast = "(long long)"; }
                     re0_buffer_write_fmt(b, "printf(\"%s%s\", %s",
@@ -218,12 +219,34 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 }
                 /* string builtins */
                 if (strcmp(fn, "str_len") == 0)    { re0_buffer_write_str(b, "__reo_str_len((char*)"); goto gen1; }
-                if (strcmp(fn, "str_to_int") == 0) { re0_buffer_write_str(b, "__reo_str_to_int((char*)"); goto gen1; }
+                if ((strcmp(fn, "str_to_int") == 0 || strcmp(fn, "to_string") == 0 ||
+                     strcmp(fn, "char_to_str") == 0) && e->call.arg_count == 1) {
+                    Re0Type target = {0};
+                    target.kind = strcmp(fn, "str_to_int") == 0 ? RE0_TYPE_I64 : RE0_TYPE_STR;
+                    Re0Expr conversion = {0};
+                    conversion.kind = EXPR_CAST;
+                    conversion.span = e->span;
+                    conversion.resolved_type = &target;
+                    conversion.cast.inner = e->call.args[0];
+                    Re0Expr byte_conversion = {0};
+                    Re0Type byte_type = {0};
+                    if (strcmp(fn, "char_to_str") == 0) {
+                        byte_type.kind = RE0_TYPE_CHAR;
+                        byte_conversion.kind = EXPR_CAST;
+                        byte_conversion.span = e->span;
+                        byte_conversion.resolved_type = &byte_type;
+                        byte_conversion.cast.inner = e->call.args[0];
+                        byte_conversion.cast.target_type = "char";
+                        conversion.cast.inner = &byte_conversion;
+                    }
+                    conversion.cast.target_type = (char*)re0_type_kind_name(target.kind);
+                    return c_gen_cast(c, &conversion);
+                }
                 /* array length: works for both fat-pointer array kinds */
                 if (strcmp(fn, "len") == 0 && e->call.arg_count == 1) {
                     char at[128];
                     if (infer_expr_c_type(e->call.args[0], at, sizeof(at)) &&
-                        (strcmp(at, "__reo_arr_t") == 0 || strcmp(at, "__reo_arrf_t") == 0)) {
+                        (strcmp(at, "__reo_arr_t") == 0 || strcmp(at, "__reo_arrf_t") == 0 || strcmp(at, "__reo_arr128_t") == 0)) {
                         re0_buffer_write_str(b, "(&( ");
                         c_gen_expr(c, e->call.args[0]);
                         re0_buffer_write_str(b, "))->len");
@@ -240,12 +263,10 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 }
                 if (strcmp(fn, "str_concat") == 0) { re0_buffer_write_str(b, "__reo_str_concat((char*)"); goto gen2; }
                 if (strcmp(fn, "str_eq") == 0)     { re0_buffer_write_str(b, "__reo_str_eq((char*)"); goto gen2; }
-                if (strcmp(fn, "char_to_str") == 0){ re0_buffer_write_str(b, "__reo_char_to_str((char)"); goto gen1; }
-                if (strcmp(fn, "to_string") == 0)  { re0_buffer_write_str(b, "__reo_to_string((int64_t)"); goto gen1; }
                 if (strcmp(fn, "is_digit") == 0)   { re0_buffer_write_str(b, "__reo_is_digit((char)"); goto gen1; }
                 if (strcmp(fn, "is_alpha") == 0)   { re0_buffer_write_str(b, "__reo_is_alpha((char)"); goto gen1; }
                 if (strcmp(fn, "is_alnum") == 0)   { re0_buffer_write_str(b, "__reo_is_alnum((char)"); goto gen1; }
-                if (strcmp(fn, "free") == 0)       { re0_buffer_write_str(b, "(free((void*)"); goto gen1; }
+                if (strcmp(fn, "free") == 0)       { re0_buffer_write_str(b, "(__reo_gc_free((void*)"); goto gen1; }
                 if (strcmp(fn, "exit") == 0)       { re0_buffer_write_str(b, "(exit((int)"); goto gen1; }
                 if (strcmp(fn, "str_slice") == 0)  {
                     re0_buffer_write_str(b, "__reo_str_slice((char*)");
@@ -347,12 +368,52 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 break;
             }
             generic_call:
-            /* generic call detection: infer type args, instantiate, call mangled name */
+            /* generic call detection: infer type args, instantiate, call mangled name.
+             * Callee may carry turbofish form "name<type>" (parser rewrite):
+             * split it off and pass the explicit type to instantiation. */
             if (e->call.callee->kind == EXPR_IDENT) {
                 const char *fn = e->call.callee->ident.name;
+                char base[128]; const char *explicit_ty = NULL;
+                const char *lt = strchr(fn, '<');
+                if (lt && strchr(lt, '>')) {
+                    size_t blen = (size_t)(lt - fn);
+                    if (blen < sizeof(base)) {
+                        memcpy(base, fn, blen); base[blen] = '\0';
+                        fn = base;
+                        explicit_ty = lt + 1;
+                        char *gt = strchr(base, 0); /* unused; strip below */
+                        (void)gt;
+                        /* extract type text between < and > into a local */
+                        static char tybuf[8][128]; static int tyseq = 0;
+                        int slot = tyseq++ % 8;
+                        const char *ty2 = lt + 1;
+                        const char *end2 = strchr(ty2, '>');
+                        size_t tl = end2 ? (size_t)(end2 - ty2) : 0;
+                        if (tl >= sizeof(tybuf[0])) tl = sizeof(tybuf[0]) - 1;
+                        memcpy(tybuf[slot], ty2, tl); tybuf[slot][tl] = '\0';
+                        explicit_ty = tybuf[slot];
+                    }
+                }
                 char mangled_buf[256];
-                const char *mangled = try_instantiate_generic_call(
-                    c, fn, e->call.args, e->call.arg_count, mangled_buf, sizeof(mangled_buf));
+                const char *mangled = explicit_ty
+                    ? NULL /* handled below */
+                    : try_instantiate_generic_call(
+                        c, fn, e->call.args, e->call.arg_count, mangled_buf, sizeof(mangled_buf));
+                if (!mangled && explicit_ty) {
+                    /* explicit type: build mangled name directly. Only record
+                     * the pending instantiation — c_end emits the body via
+                     * flush_pending_instantiations (calling it here would
+                     * splice the function body into the current statement). */
+                    Re0Stmt *def = find_generic_fn(fn);
+                    if (def) {
+                        snprintf(mangled_buf, sizeof(mangled_buf), "%s_%s", fn, explicit_ty);
+                        if (!is_already_instantiated(mangled_buf)) {
+                            char *targs[1]; targs[0] = (char*)explicit_ty;
+                            instantiate_generic_fn(c, def, targs, 1);
+                        }
+                        mangled = mangled_buf;
+                    }
+                }
                 if (mangled) {
                     re0_buffer_write_str(b, mangled);
                     re0_buffer_write_char(b, '(');
@@ -494,6 +555,22 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
              * distinguish Option/Result by inner expression type (default Option if inference fails) */
             int t = c->temp_counter++;
             char inner_type[128] = {0};
+            if (infer_expr_c_type(e->try_.inner, inner_type, sizeof(inner_type)) &&
+                strncmp(inner_type, "__reo_result_", 13) == 0) {
+                re0_buffer_write_fmt(b, "({ %s __t%d = (", inner_type, t);
+                c_gen_expr(c, e->try_.inner);
+                Re0Expr result_expression = {0};
+                result_expression.resolved_type = e->try_.return_type;
+                char result_type[128];
+                if (!infer_expr_c_type(&result_expression, result_type, sizeof(result_type))) {
+                    c->had_error = true;
+                    re0_error_append(c->errors, RE0_ERR_SEMANTIC, e->span, NULL, "unsupported Result propagation layout");
+                    break;
+                }
+                re0_buffer_write_fmt(b, "); if (__t%d.tag) return (%s){ .tag=1, .error=__t%d.error, .index=__t%d.index }; __t%d.value; })",
+                                     t, result_type, t, t, t);
+                break;
+            }
             int is_result =
                 infer_expr_c_type(e->try_.inner, inner_type, sizeof(inner_type)) &&
                 strcmp(inner_type, "Result") == 0;
@@ -529,7 +606,9 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
                 if (infer_expr_c_type(e->array.elems[i], et, sizeof(et)))
                     is_float = strcmp(et, "float") == 0 || strcmp(et, "double") == 0;
             }
-            const char *dup = is_float ? "__reo_arrf_lit((const double[]){" : "__reo_arr_lit((const int64_t[]){";
+            char array_type[128];
+            bool wide = infer_expr_c_type(e, array_type, sizeof(array_type)) && strcmp(array_type, "__reo_arr128_t") == 0;
+            const char *dup = wide ? "__reo_arr128_lit((const __reo_u128[]){" : is_float ? "__reo_arrf_lit((const double[]){" : "__reo_arr_lit((const int64_t[]){";
             re0_buffer_write_str(b, dup);
             for (int i = 0; i < e->array.count; i++) {
                 if (i > 0) re0_buffer_write_str(b, ", ");
@@ -543,7 +622,9 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             char et[128];
             bool rep_float = infer_expr_c_type(e->array_repeat.value, et, sizeof(et)) &&
                              (strcmp(et, "float") == 0 || strcmp(et, "double") == 0);
-            const char *fn = rep_float ? "__reo_arrf_rep" : "__reo_arr_rep";
+            char array_type[128];
+            bool wide = infer_expr_c_type(e, array_type, sizeof(array_type)) && strcmp(array_type, "__reo_arr128_t") == 0;
+            const char *fn = wide ? "__reo_arr128_rep" : rep_float ? "__reo_arrf_rep" : "__reo_arr_rep";
             re0_buffer_write_fmt(b, "%s((int64_t)(", fn);
             if (e->array_repeat.count) c_gen_expr(c, e->array_repeat.count);
             else re0_buffer_write_str(b, "0");
@@ -558,14 +639,27 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             char base[128];
             bool base_known = infer_expr_c_type(e->index.target, base, sizeof(base));
             bool dbl = base_known && strcmp(base, "__reo_arrf_t") == 0;
-            if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl)) {
-                re0_buffer_write_fmt(b, "%s(&(", dbl ? "__reo_arrf_get" : "__reo_arr_get");
+            bool wide = base_known && strcmp(base, "__reo_arr128_t") == 0;
+            if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl || wide)) {
+                Re0TypeKind element = e->resolved_type ? e->resolved_type->kind : RE0_TYPE_I64;
+                bool signed_wide = wide && element == RE0_TYPE_I128;
+                int temporary = c->temp_counter++;
+                re0_buffer_write_fmt(b, "({ %s __array%d = (", base, temporary);
                 c_gen_expr(c, e->index.target);
-                re0_buffer_write_str(b, "), (int64_t)(");
+                re0_buffer_write_fmt(b, "); ((%s)(%s", reo_type_to_c(re0_type_kind_name(element)), signed_wide ? "__reo_conv_signed(" : "");
+                re0_buffer_write_fmt(b, "%s(&__array%d, (int64_t)(", wide ? "__reo_arr128_get" : dbl ? "__reo_arrf_get" : "__reo_arr_get", temporary);
                 c_gen_expr(c, e->index.index);
                 re0_buffer_write_str(b, "))");
+                if (signed_wide) re0_buffer_write_str(b, ", 128)");
+                re0_buffer_write_str(b, ")); })");
+            } else if (base_known && strcmp(base, "const char*") == 0) {
+                re0_buffer_write_str(b, "__reo_str_char_at(");
+                c_gen_expr(c, e->index.target);
+                re0_buffer_write_str(b, ", ");
+                c_gen_expr(c, e->index.index);
+                re0_buffer_write_char(b, ')');
             } else {
-                /* non-array base (str, vec, inline struct arrays): raw C index */
+                /* Inline C arrays retain their native representation. */
                 re0_buffer_write_char(b, '(');
                 c_gen_expr(c, e->index.target);
                 re0_buffer_write_char(b, '[');
@@ -574,86 +668,7 @@ int c_gen_expr(Re0Codegen *c, Re0Expr *e) {
             }
             break;
         }
-        case EXPR_CAST: {
-            const char *target = e->cast.target_type;
-            const char *c_type = reo_type_to_c(target);
-            /* Determine source type for safe cast selection */
-            char src_type[128] = {0};
-            bool src_known = infer_expr_c_type(e->cast.inner, src_type, sizeof(src_type));
-            bool src_is_str = src_known && strcmp(src_type, "const char*") == 0;
-            bool src_is_float = src_known && (strcmp(src_type, "float") == 0 ||
-                                               strcmp(src_type, "double") == 0);
-            bool src_is_bool = src_known && strcmp(src_type, "bool") == 0;
-            bool dst_is_str = target && strcmp(target, "str") == 0;
-            bool dst_is_float = target && (strcmp(target, "f32") == 0 ||
-                                            strcmp(target, "f64") == 0);
-            bool dst_is_int = target && (target[0] == 'i' || target[0] == 'u' ||
-                              strcmp(target, "bool") == 0 || strcmp(target, "char") == 0);
-
-            if (src_is_str && dst_is_float) {
-                /* str -> float: parse */
-                re0_buffer_write_str(b, "__reo_str_to_f64(");
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, ")");
-            } else if (src_is_str && dst_is_int) {
-                /* str -> int: parse */
-                re0_buffer_write_fmt(b, "(%s)__reo_str_to_int(", c_type);
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, ")");
-            } else if (src_is_float && dst_is_str) {
-                /* float -> str: format */
-                re0_buffer_write_str(b, "__reo_f64_to_str(");
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, ")");
-            } else if (!src_is_str && !src_is_float && dst_is_str) {
-                /* int/bool/char -> str: format via to_string */
-                re0_buffer_write_str(b, "__reo_to_string((int64_t)(");
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, "))");
-            } else if (src_is_float && dst_is_int) {
-                /* float->int: NaN/Inf-safe conversion */
-                re0_buffer_write_fmt(b, "__reo_safe_f2i(");
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_fmt(b, ", \"%s\")", c_type);
-            } else if (src_known && !src_is_float && !src_is_str && dst_is_float) {
-                /* int->float: direct cast is safe */
-                re0_buffer_write_fmt(b, "((%s)(", c_type);
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, "))");
-            } else if (src_known && !src_is_float && !src_is_str && dst_is_int) {
-                /* int->int: narrowing-safe conversion */
-                size_t dst_sz = 0;
-                if (target) {
-                    Re0Type *dt = re0_type_parse(target);
-                    if (dt) { dst_sz = re0_type_sizeof(dt->kind); free(dt); }
-                }
-                size_t src_sz = 8; /* default i64 */
-                if (strcmp(src_type, "int8_t") == 0 || strcmp(src_type, "uint8_t") == 0) src_sz = 1;
-                else if (strcmp(src_type, "int16_t") == 0 || strcmp(src_type, "uint16_t") == 0) src_sz = 2;
-                else if (strcmp(src_type, "int32_t") == 0 || strcmp(src_type, "uint32_t") == 0) src_sz = 4;
-                if (dst_sz > 0 && dst_sz < src_sz) {
-                    /* narrowing: use safe cast with range check */
-                    re0_buffer_write_fmt(b, "((%s)__reo_safe_narrow((int64_t)(", c_type);
-                    c_gen_expr(c, e->cast.inner);
-                    re0_buffer_write_fmt(b, "), %zuU, \"%s\"))", dst_sz, c_type);
-                } else {
-                    re0_buffer_write_fmt(b, "((%s)(", c_type);
-                    c_gen_expr(c, e->cast.inner);
-                    re0_buffer_write_str(b, "))");
-                }
-            } else if (src_is_bool && dst_is_float) {
-                /* bool -> float: 0.0/1.0 */
-                re0_buffer_write_fmt(b, "((%s)(", c_type);
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, ") ? 1.0 : 0.0)");
-            } else {
-                /* fallback: direct C cast */
-                re0_buffer_write_fmt(b, "((%s)(", c_type);
-                c_gen_expr(c, e->cast.inner);
-                re0_buffer_write_str(b, "))");
-            }
-            break;
-        }
+        case EXPR_CAST: return c_gen_cast(c, e);
         default: re0_buffer_write_str(b, "0"); break;
     }
     return 0;

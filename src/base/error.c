@@ -15,6 +15,9 @@ void re0_error_append(Re0ErrorList *l, Re0ErrorLevel lev, Re0Span sp,
     e.level = lev;
     e.span = sp;
     e.file = file;
+    /* A NULL format must not reach vsnprintf (undefined behaviour); treat it
+     * as an empty message so error reporting never crashes the compiler. */
+    if (!fmt) fmt = "";
     va_list ap;
     va_start(ap, fmt);
     int need = vsnprintf(NULL, 0, fmt, ap);

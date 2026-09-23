@@ -21,6 +21,8 @@ static void print_usage(void) {
     printf("Usage:\n");
     printf("  rev run <file.reo> [--target c|reo]  Compile and run\n");
     printf("  rev build [file.reo] [-o out]        Compile to executable/asm\n");
+    printf("  rev build [file.reo] --shared         Compile to shared library (.so/.dll)\n");
+    printf("  rev build [file.reo] --target wasm    Compile to WebAssembly (WASI)\n");
     printf("  rev check <file.reo>                 Type check only\n");
     printf("  rev lsp                              Start LSP server\n");
     printf("  rev venv <init|activate>             Manage virtual environment\n");
@@ -251,6 +253,8 @@ int main(int argc, char **argv) {
     const char *path = argv[2];
     char default_output[512];
     const char *output = default_output;
+    bool shared = false;
+    bool wasm = false;
     const char *last_slash = strrchr(argv[0], '/');
     const char *last_backslash = strrchr(argv[0], '\\');
     if (last_backslash && (!last_slash || last_backslash > last_slash))
@@ -284,12 +288,19 @@ int main(int argc, char **argv) {
             else if (strcmp(argv[i + 1], "c") == 0) backend = &re0_backend_c;
             else if (strcmp(argv[i + 1], "c-freestanding") == 0)
                 backend = &re0_backend_c_freestanding;
+            else if (strcmp(argv[i + 1], "wasm") == 0) {
+                backend = &re0_backend_c_freestanding;
+                wasm = true;
+            }
         }
+        if (strcmp(argv[i], "--shared") == 0) shared = true;
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
     }
 
     Re0Compiler comp;
     re0_compiler_init(&comp, backend);
+    comp.shared = shared;
+    comp.wasm = wasm;
 
     bool ok = false;
     if (strcmp(cmd, "run") == 0) ok = re0_compiler_run(&comp, path);

@@ -38,13 +38,6 @@ bool reo_venv_create(const char *project_dir);
 /* detect whether currently inside a virtual environment (search upward for .renv/) */
 bool reo_venv_detect(char *out_env_dir, size_t cap);
 
-/* resolve import path (multi-level fallback)
- * returns true if the file is found; full path written to out_path */
-bool reo_venv_resolve_import(const char *module_name,
-                              const char *project_dir,
-                              const char *env_dir,
-                              char *out_path, size_t cap);
-
 /* install the standard library into the virtual environment */
 bool reo_venv_install_std(const char *env_dir);
 

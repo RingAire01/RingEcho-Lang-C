@@ -174,53 +174,10 @@ bool reo_venv_detect(char *out_env_dir, size_t cap) {
     return false;
 }
 
-/* ── import path resolution (multi-level fallback) ── */
-
-bool reo_venv_resolve_import(const char *module_name,
-                              const char *project_dir,
-                              const char *env_dir,
-                              char *out_path, size_t cap) {
-    /* 1. project-local: project_dir/module_name.reo */
-    if (project_dir) {
-        join_path(out_path, cap, project_dir, module_name);
-        strncat(out_path, ".reo", cap - strlen(out_path) - 1);
-        if (access(out_path, R_OK) == 0) return true;
-    }
-
-    /* 2. venv third-party package: env_dir/lib/packages/module_name.reo */
-    if (env_dir) {
-        char pkg_dir[512];
-        snprintf(pkg_dir, sizeof(pkg_dir), "%s/%s/%s", env_dir, RE0_VENV_LIB, RE0_VENV_PACKAGES);
-        join_path(out_path, cap, pkg_dir, module_name);
-        strncat(out_path, ".reo", cap - strlen(out_path) - 1);
-        if (access(out_path, R_OK) == 0) return true;
-
-        /* 3. venv standard library: env_dir/lib/std/module_name.reo */
-    char std_dir[600];
-        snprintf(std_dir, sizeof(std_dir), "%s/%s/%s", env_dir, RE0_VENV_LIB, RE0_VENV_STD);
-        join_path(out_path, cap, std_dir, module_name);
-        strncat(out_path, ".reo", cap - strlen(out_path) - 1);
-        if (access(out_path, R_OK) == 0) return true;
-    }
-
-    /* 4. global: ~/.re/lib/module_name.reo */
-    const char *home =
-#if defined(RE0_PLATFORM_WINDOWS)
-        getenv("USERPROFILE");
-    if (!home) home = getenv("HOME");
-#else
-        getenv("HOME");
-#endif
-    if (home) {
-        char global_dir[512];
-        snprintf(global_dir, sizeof(global_dir), "%s/%s", home, RE0_GLOBAL_LIB_DIR);
-        join_path(out_path, cap, global_dir, module_name);
-        strncat(out_path, ".reo", cap - strlen(out_path) - 1);
-        if (access(out_path, R_OK) == 0) return true;
-    }
-
-    return false;
-}
+/* ── import path resolution ──
+ * 实际的 import 解析由 workspace.c 的 resolve_import_path（静态）负责，
+ * 它通过 re0_is_safe_rel_path 校验相对路径，拒绝 '..'、绝对路径、
+ * 驱动号/冒号与反斜杠绕过。此处的死代码版本已移除。 */
 
 /* ── print activation script ── */
 

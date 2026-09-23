@@ -9,7 +9,13 @@
  * by re0_arena_free — per-node destroy does not exist by design.
  * Frontend construction is single-threaded per compiler instance;
  * re0_ast_bind_arena is not thread-safe across concurrent parsers. */
-static Re0Arena *ast_arena = NULL;
+#if defined(_MSC_VER)
+static __declspec(thread) Re0Arena *ast_arena = NULL;
+#elif defined(__GNUC__) || defined(__clang__)
+static __thread Re0Arena *ast_arena = NULL;
+#else
+static _Thread_local Re0Arena *ast_arena = NULL;
+#endif
 
 void re0_ast_bind_arena(Re0Arena *arena) {
     ast_arena = arena;

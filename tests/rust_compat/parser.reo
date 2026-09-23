@@ -88,7 +88,7 @@ impl Parser {
             self.tok_end = self.pos
             return
         }
-        if ch == 43 { self.advance_ch(); self.tok_kind = 2; self.tok_end = self.pos; return }
+        if ch == 43 { self.advance_ch() as i64; self.tok_kind = 2; self.tok_end = self.pos; return }
         if ch == 45 {
             self.advance_ch()
             if self.pos < self.len && self.peek() == 62 {

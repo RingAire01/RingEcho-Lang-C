@@ -7,4 +7,6 @@
 #include "exec/toml_config.h"
 #include "exec/workspace.h"
 
+#include "exec/process.h"
+
 #endif

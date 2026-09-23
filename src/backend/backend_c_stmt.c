@@ -44,8 +44,10 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             } else if (s->let_stmt.init && s->let_stmt.init->kind == EXPR_IDENT) {
                 if (split_qualified(s->let_stmt.init->ident.name, ename, sizeof(ename), vname, sizeof(vname)))
                     ctype = ename;
-                else
+                else if (s->let_stmt.type)
                     ctype = reo_type_to_c(s->let_stmt.type);
+                else if (infer_expr_c_type(s->let_stmt.init, inferred_type, sizeof(inferred_type)))
+                    ctype = inferred_type;
             } else if (s->let_stmt.type)
                 ctype = reo_type_to_c(s->let_stmt.type);
             else if (s->let_stmt.init &&
@@ -69,9 +71,11 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
         }
         case STMT_CONST:
             re0_buffer_write_indent(b, depth);
-            re0_buffer_write_fmt(b, "#define %s ", s->const_decl.name);
+            re0_buffer_write_fmt(b, "#define %s (", s->const_decl.name);
+            if (s->const_decl.type) re0_buffer_write_fmt(b, "(%s)(", reo_type_to_c(s->const_decl.type));
             c_gen_expr(c, s->const_decl.value);
-            re0_buffer_write_char(b, '\n');
+            if (s->const_decl.type) re0_buffer_write_char(b, ')');
+            re0_buffer_write_str(b, ")\n");
             break;
         case STMT_TYPE_ALIAS:
             re0_buffer_write_fmt(b, "typedef %s %s;\n",
@@ -100,8 +104,9 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 char base[128];
                 bool base_known = infer_expr_c_type(s->index_assign.target, base, sizeof(base));
                 bool dbl = base_known && strcmp(base, "__reo_arrf_t") == 0;
-                if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl)) {
-                    re0_buffer_write_fmt(b, "%s(&(", dbl ? "__reo_arrf_set" : "__reo_arr_set");
+                bool wide = base_known && strcmp(base, "__reo_arr128_t") == 0;
+                if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl || wide)) {
+                    re0_buffer_write_fmt(b, "%s(&(", wide ? "__reo_arr128_set" : dbl ? "__reo_arrf_set" : "__reo_arr_set");
                     c_gen_expr(c, s->index_assign.target);
                     re0_buffer_write_str(b, "), (int64_t)(");
                     c_gen_expr(c, s->index_assign.index);
@@ -109,7 +114,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                     if (s->index_assign.op == BINOP_ASSIGN_SENTINEL) {
                         c_gen_expr(c, s->index_assign.value);
                     } else if (s->index_assign.op == BINOP_ADD) {                        /* compound += : read, add, write */
-                        re0_buffer_write_fmt(b, "%s(&(", dbl ? "__reo_arrf_get" : "__reo_arr_get");
+                        re0_buffer_write_fmt(b, "%s(&(", wide ? "__reo_arr128_get" : dbl ? "__reo_arrf_get" : "__reo_arr_get");
                         c_gen_expr(c, s->index_assign.target);
                         re0_buffer_write_str(b, "), (int64_t)(");
                         c_gen_expr(c, s->index_assign.index);
@@ -218,12 +223,20 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 char at[128];
                 bool dbl = infer_expr_c_type(iter, at, sizeof(at)) &&
                            strcmp(at, "__reo_arrf_t") == 0;
-                re0_buffer_write_fmt(b, "{ %s __a%d = ", dbl ? "__reo_arrf_t" : "__reo_arr_t", t);
+                bool wide = strcmp(at, "__reo_arr128_t") == 0;
+                re0_buffer_write_fmt(b, "{ %s __a%d = ", wide ? "__reo_arr128_t" : dbl ? "__reo_arrf_t" : "__reo_arr_t", t);
                 c_gen_expr(c, iter);
                 re0_buffer_write_fmt(b, "; for (int64_t __i%d = 0; __i%d < __a%d.len; __i%d++) {\n",
                                      t, t, t, t);
-                re0_buffer_write_fmt(b, "%s %s = __a%d.data[__i%d];\n",
-                                     dbl ? "double" : "int64_t", s->for_stmt.var, t, t);
+                Re0Type *element = iter->resolved_type && iter->resolved_type->kind == RE0_TYPE_ARRAY
+                    ? iter->resolved_type->array.inner : iter->resolved_type && iter->resolved_type->kind == RE0_TYPE_SLICE
+                    ? iter->resolved_type->slice.inner : NULL;
+                bool signed_wide = wide && element && element->kind == RE0_TYPE_I128;
+                const char *element_type = wide ? (signed_wide ? "__int128" : "unsigned __int128") : dbl ? "double" : "int64_t";
+                re0_buffer_write_fmt(b, "%s %s = %s__a%d.data[__i%d]%s;\n", element_type,
+                                     s->for_stmt.var, signed_wide ? "__reo_conv_signed(" : "", t, t,
+                                     signed_wide ? ", 128)" : "");
+                track_var(s->for_stmt.var, element_type);
             }
             /* numeric iteration: for i in count */
             else {
@@ -261,6 +274,9 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                                     s->function.params[i].name);
             }
             re0_buffer_write_str(b, ") {\n");
+            /* recursion depth guard: bounded user recursion instead of a
+             * native stack overflow (RAII cleanup unwinds on every return). */
+            re0_buffer_write_str(b, "    __REO_DEPTH_GUARD;\n");
             /* track param types */
             clear_var_types();
             for (int i = 0; i < s->function.param_count; i++)
@@ -275,7 +291,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 register_generic_struct(s->struct_decl.name, s);
                 break;
             }
-            re0_buffer_write_str(b, "typedef struct { ");
+            re0_buffer_write_fmt(b, "struct %s { ", s->struct_decl.name);
             for (int i = 0; i < s->struct_decl.field_count; i++) {
                 re0_buffer_write_fmt(b, "%s %s; ",
                                     reo_type_to_c(s->struct_decl.fields[i].type),
@@ -284,15 +300,15 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                                    s->struct_decl.fields[i].name,
                                    s->struct_decl.fields[i].type);
             }
-            re0_buffer_write_fmt(b, "} %s;\n", s->struct_decl.name);
+            re0_buffer_write_str(b, "};\n");
             break;
         case STMT_ENUM:
-            re0_buffer_write_fmt(b, "typedef struct { int64_t tag; union { ");
+            re0_buffer_write_fmt(b, "struct %s { int64_t tag; union { ", s->enum_decl.name);
             for (int i = 0; i < s->enum_decl.variant_count; i++) {
                 if (s->enum_decl.variants[i].type_count > 0)
                     re0_buffer_write_fmt(b, "int64_t v%d; ", i);
             }
-            re0_buffer_write_fmt(b, "} u; } %s;\n", s->enum_decl.name);
+            re0_buffer_write_str(b, "} u; };\n");
             break;
         case STMT_EXTERN:
             for (int i = 0; i < s->extern_.func_count; i++)

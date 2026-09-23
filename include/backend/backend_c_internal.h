@@ -46,27 +46,35 @@ typedef struct {
     char mangled[256];
 } PendingInst;
 
+#if defined(_MSC_VER)
+#define RE0_THREAD_LOCAL __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define RE0_THREAD_LOCAL __thread
+#else
+#define RE0_THREAD_LOCAL _Thread_local
+#endif
+
 /* global backend state (defined in backend_c_type.c, reset by reset_c_state) */
-extern Re0CVarType var_types[MAX_VAR_TYPES];
-extern int var_type_count;
-extern FnRetSlot g_fn_rets[MAX_FN_RETS];
-extern int g_fn_ret_count;
-extern StructFieldSlot g_struct_fields[MAX_STRUCT_FIELDS];
-extern int g_struct_field_count;
-extern LambdaSlot g_lambdas[MAX_LAMBDAS];
-extern int g_lambda_count;
-extern int g_lambda_counter;
-extern size_t g_fwd_insert_pos;
-extern GenericStructSlot g_generic_structs[MAX_GENERIC_STRUCTS];
-extern int g_generic_struct_count;
-extern GenericFnSlot g_generic_fns[MAX_GENERIC_FNS];
-extern int g_generic_fn_count;
-extern InstantiatedSlot g_instantiated[MAX_INSTANTIATED];
-extern int g_instantiated_count;
-extern PendingInst g_pending_list[MAX_INSTANTIATED];
-extern char g_struct_instances[MAX_INSTANTIATED][256];
-extern int g_struct_instance_count;
-extern int g_pending_count;
+extern RE0_THREAD_LOCAL Re0CVarType var_types[MAX_VAR_TYPES];
+extern RE0_THREAD_LOCAL int var_type_count;
+extern RE0_THREAD_LOCAL FnRetSlot g_fn_rets[MAX_FN_RETS];
+extern RE0_THREAD_LOCAL int g_fn_ret_count;
+extern RE0_THREAD_LOCAL StructFieldSlot g_struct_fields[MAX_STRUCT_FIELDS];
+extern RE0_THREAD_LOCAL int g_struct_field_count;
+extern RE0_THREAD_LOCAL LambdaSlot g_lambdas[MAX_LAMBDAS];
+extern RE0_THREAD_LOCAL int g_lambda_count;
+extern RE0_THREAD_LOCAL int g_lambda_counter;
+extern RE0_THREAD_LOCAL size_t g_fwd_insert_pos;
+extern RE0_THREAD_LOCAL GenericStructSlot g_generic_structs[MAX_GENERIC_STRUCTS];
+extern RE0_THREAD_LOCAL int g_generic_struct_count;
+extern RE0_THREAD_LOCAL GenericFnSlot g_generic_fns[MAX_GENERIC_FNS];
+extern RE0_THREAD_LOCAL int g_generic_fn_count;
+extern RE0_THREAD_LOCAL InstantiatedSlot g_instantiated[MAX_INSTANTIATED];
+extern RE0_THREAD_LOCAL int g_instantiated_count;
+extern RE0_THREAD_LOCAL PendingInst g_pending_list[MAX_INSTANTIATED];
+extern RE0_THREAD_LOCAL char g_struct_instances[MAX_INSTANTIATED][256];
+extern RE0_THREAD_LOCAL int g_struct_instance_count;
+extern RE0_THREAD_LOCAL int g_pending_count;
 
 /* shared functions (see the owning file above) */
 void track_var(const char *name, const char *ctype);
@@ -80,6 +88,8 @@ bool builtin_returns_svec(const char *fn);
 void clear_var_types(void);
 bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size);
 const char *reo_type_to_c(const char *t);
+int c_gen_cast(Re0Codegen *c, Re0Expr *e);
+Re0TypeKind c_expr_scalar_kind(Re0Expr *e);
 const char *binop_c(Re0BinOpKind op);
 bool split_qualified(const char *name, char *enum_name, int elen, char *variant, int vlen);
 bool expr_is_float(Re0Expr *e);

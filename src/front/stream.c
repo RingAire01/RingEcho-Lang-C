@@ -17,7 +17,7 @@ Re0Token *re0_stream_peek(Re0TokenStream *s) {
 }
 
 Re0Token re0_stream_advance(Re0TokenStream *s) {
-    Re0Token t = { TK_EOF, RE0_SPAN_ZERO, {0}, NULL, NULL };
+    Re0Token t = { .kind = TK_EOF, .span = RE0_SPAN_ZERO };
     if (s->cursor < Re0TokenVec_len(&s->tokens))
         t = s->tokens.data[s->cursor++];
     return t;
@@ -30,7 +30,7 @@ bool re0_stream_check(Re0TokenStream *s, Re0TokenKind k) {
 
 Re0Token re0_stream_expect(Re0TokenStream *s, Re0TokenKind k) {
     if (re0_stream_check(s, k)) return re0_stream_advance(s);
-    Re0Token t = { TK_ERROR, RE0_SPAN_ZERO, {0}, NULL, NULL };
+    Re0Token t = { .kind = TK_ERROR, .span = RE0_SPAN_ZERO };
     return t;
 }
 

@@ -2,6 +2,7 @@
 #define RE0_AST_H
 #include "base/span.h"
 #include "base/types.h"
+#include "base/numeric.h"
 #include "base/vec.h"
 #include "base/arena.h"
 #include <stdint.h>
@@ -56,9 +57,11 @@ typedef struct { char *field; Re0Expr *value; } Re0StructFieldInit;
 
 struct Re0Expr {
     Re0ExprKind kind; Re0Span span;
+    /* Borrowed from the semantic type owner until code generation completes. */
+    Re0Type *resolved_type;
     union {
         struct { char *name; } ident;
-        struct { int64_t val; char *suffix; } int_lit;
+        struct { int64_t val; char *suffix; Re0Integer integer; } int_lit;
         struct { double val; char *suffix; } float_lit;
         struct { char *val; } str_lit;
         struct { char val; } char_lit;
@@ -73,11 +76,11 @@ struct Re0Expr {
         Re0ExprArrayRepeat array_repeat;
         Re0ExprIf if_expr;
         Re0ExprBlock block;
-        struct { Re0Expr *inner; } try_;
+        struct { Re0Expr *inner; Re0Type *return_type; } try_;
         Re0ExprMatch match_;
         struct { Re0LambdaParam *params; int param_count; Re0Expr *body; } lambda;
         struct { char *name; Re0StructFieldInit *fields; int field_count; } struct_init;
-        struct { Re0Expr *inner; char *target_type; } cast;
+        struct { Re0Expr *inner; char *target_type; bool checked; } cast;
     };
 };
 

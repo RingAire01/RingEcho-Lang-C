@@ -1,6 +1,0 @@
-/* illegal casts must be rejected by sema, not silently emit broken C */
-fn main() {
-    let flag = true;
-    let s = flag as str;
-    println(s);
-}

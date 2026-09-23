@@ -7,5 +7,6 @@
  * helpers, GC glue, task runtime) into `out` as the prelude of a generated
  * program. Called by the C backend's c_begin(). */
 void re0_runtime_c_emit(Re0Buffer *out);
+void re0_runtime_conversion_emit(Re0Buffer *out);
 
 #endif

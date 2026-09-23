@@ -1,0 +1,3 @@
+/* Composite values require an explicit conversion protocol. */
+struct Point { x: i64 }
+fn main() { let p = Point { x: 1 }; println(p as i64); }

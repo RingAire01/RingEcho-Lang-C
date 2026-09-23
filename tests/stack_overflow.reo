@@ -1,0 +1,6 @@
+fn f(n: i64) -> i64 {
+    return 1 + f(n - 1)
+}
+fn main() {
+    println(f(100000))
+}

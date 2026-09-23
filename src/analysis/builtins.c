@@ -37,6 +37,7 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
     add_builtin(r, "print", "unit", str_s, str_t, 1);
     add_builtin(r, "panic", "never", str_s, str_t, 1);
     add_builtin(r, "assert", "unit", c_s, c_t, 1);
+    add_builtin(r, "len", "i64", str_s, str_t, 1);
     add_builtin(r, "str_len", "i64", str_s, str_t, 1);
     add_builtin(r, "str_char_at", "char", si_s, si_t, 2);
     add_builtin(r, "str_slice", "str", sse_s, sse_t, 3);
@@ -101,6 +102,14 @@ void re0_builtin_free(Re0BuiltinRegistry *r) {
         for (int j = 0; j < r->fns.data[i].param_count; j++)
             free(r->fns.data[i].params[j].name);
         free(r->fns.data[i].params);
+        /* NOTE: ret_type and params[j].type are NOT freed here. They are
+         * heap-owned type objects shared with the sema pass (infer_type
+         * returns them directly, and re0_sema_destroy releases them via its
+         * deduplicated owned_types list). Freeing them here would
+         * double-free the same pointers. Builtin types never used by any
+         * expression leak a small fixed amount (bounded by the builtin
+         * count), which is an accepted tradeoff for avoiding shared-
+         * ownership tracking. */
     }
     Re0BuiltinVec_free(&r->fns);
 }

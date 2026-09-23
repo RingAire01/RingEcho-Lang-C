@@ -17,6 +17,10 @@ typedef enum {
 
 typedef struct Re0Type {
     Re0TypeKind kind;
+    /* owned=true means the type and its inner fields were heap-allocated
+     * (xcalloc/xmalloc/strdup) and must be released by re0_type_free;
+     * owned=false means arena-allocated and freed with the arena. */
+    bool owned;
     union {
         struct { struct Re0Type *inner; size_t size; } array;
         struct { struct Re0Type *inner; } slice;
@@ -59,6 +63,14 @@ Re0Type    *re0_type_make_generic(const char *name, Re0Type **args,
 Re0Type    *re0_type_make_typevar(const char *name, void *arena);
 
 Re0Type    *re0_type_parse(const char *s);
+
+/* Free one heap-owned (owned==true) type node and its directly-owned heap
+ * fields. Child type objects are NOT freed recursively; they are tracked
+ * separately by the sema owned_types list (which deduplicates shared
+ * objects). owned==false (arena) nodes are skipped. */
+void        re0_type_free(Re0Type *t);
+/* Only for an exclusively owned tree returned by re0_type_parse. */
+void        re0_type_free_tree(Re0Type *t);
 
 /* ── structural type comparison ──
  * Recursively compare the structure of two types.

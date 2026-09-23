@@ -22,6 +22,8 @@ void re0_model_init(Re0SemanticModel *m) {
 
 void re0_model_register_struct(Re0SemanticModel *m, const char *name,
                                char **field_names, char **field_types, int n) {
+    if (!m || !name) return;
+    if (re0_model_find_struct(m, name)) return; /* avoid duplicate registration */
     Re0StructDef def;
     memset(&def, 0, sizeof(def));
     def.name = strdup(name);
@@ -38,6 +40,8 @@ void re0_model_register_struct(Re0SemanticModel *m, const char *name,
 
 void re0_model_register_enum(Re0SemanticModel *m, const char *name,
                             char **variant_names, int *has_payload, int n) {
+    if (!m || !name) return;
+    if (re0_model_find_enum(m, name)) return; /* avoid duplicate registration */
     Re0EnumDef def;
     def.name = strdup(name);
     def.variant_names = (char**)xcalloc((size_t)n, sizeof(char*));
@@ -199,6 +203,8 @@ void re0_model_register_fn(Re0SemanticModel *m, const char *name,
                            char **param_types, int param_count,
                            const char *ret_type,
                            char **type_params, int type_param_count) {
+    if (!m || !name) return;
+    if (re0_model_find_fn(m, name)) return; /* avoid duplicate registration */
     Re0FnSignature sig;
     memset(&sig, 0, sizeof(sig));
     sig.name = strdup(name);
@@ -233,7 +239,13 @@ Re0FnSignature *re0_model_find_fn(Re0SemanticModel *m, const char *name) {
 
 Re0Type *re0_model_std_type(const char *name) {
     Re0Type *t = re0_type_parse(name);
-    if (t && t->kind == RE0_TYPE_STRUCT) return NULL;
+    if (t && t->kind == RE0_TYPE_STRUCT) {
+        /* A non-standard name is represented as a temporary named struct by
+         * the generic parser. This helper reports it as unresolved, so it
+         * must release the discarded temporary object first. */
+        re0_type_free(t);
+        return NULL;
+    }
     return t;
 }
 
