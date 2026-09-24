@@ -1,6 +1,8 @@
 #include "base/safe.h"
 #include "exec/compiler.h"
 #include "exec/process.h"
+#include "exec/native_build.h"
+#include "backend/native.h"
 #include "exec/workspace.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,14 +96,15 @@ static bool stage_codegen_run(Re0Manager *m) {
     if (re0_manager_should_cancel(m)) return false;
     re0_manager_emit_event(m, RE0_EV_CODEGEN_START, NULL, NULL);
     /* Library mode: no `int main()` entry point is emitted. */
-    c->codegen.emit_main = !c->shared;
+    c->codegen.emit_main = !c->shared && !c->emit_object;
     if (!re0_codegen_generate(&c->codegen, &c->sema.checked)) {
         re0_manager_emit_event(m, RE0_EV_CODEGEN_DONE, NULL, NULL);
         c->had_error = true;
         return false;
     }
     re0_manager_emit_event(m, RE0_EV_CODEGEN_DONE, NULL, NULL);
-    ctx->code = re0_codegen_output(&c->codegen);
+    /* ELF is binary: do not append a text terminator or use strlen on it. */
+    ctx->code = c->backend == &re0_backend_native ? c->codegen.output.data : re0_codegen_output(&c->codegen);
     if (!ctx->code) {
         re0_error_append(&c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
                          "cannot obtain generated output");
@@ -117,7 +120,10 @@ static bool stage_build_run(Re0Manager *m) {
     Re0Compiler *c = ctx->comp;
     if (re0_manager_should_cancel(m)) return false;
     re0_manager_emit_event(m, RE0_EV_BUILD_START, NULL, NULL);
-    if (c->wasm) {
+    if (c->backend == &re0_backend_native) {
+        if (c->shared || c->wasm || !re0_native_build(&c->build, &c->codegen.output, ctx->output, c->emit_object))
+            c->had_error = true;
+    } else if (c->wasm) {
         /* WebAssembly target: write the C source, then compile with the
          * wasi-sdk clang (REO_WASI_CC) to wasm32-wasi. */
         const char *cc = getenv("REO_WASI_CC");
@@ -173,6 +179,12 @@ static StageMgr make_stage(const char *name, Re0EventBus *bus,
 
 bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *output) {
     if (!c || !path) return false;
+    if (c->backend == &re0_backend_native && (c->shared || c->wasm || !output || !*output)) {
+        re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                         "native compilation requires an output path and cannot use shared/WASI mode");
+        c->had_error = true;
+        return false;
+    }
     re0_event_bus_reset(&c->bus);
 
     CompileCtx ctx;
@@ -206,13 +218,24 @@ bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *out
 }
 
 bool re0_compiler_run(Re0Compiler *c, const char *path) {
+    if (!c || !path) return false;
+    if (c->emit_object) {
+        re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "cannot run a relocatable object");
+        return false;
+    }
+#if !defined(__linux__) || !defined(__x86_64__)
+    if (c->backend == &re0_backend_native) {
+        re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "native run requires x86-64 Linux");
+        return false;
+    }
+#endif
     char tmpname[512];
     if (!re0_build_temp_output_path(&c->build, tmpname, sizeof(tmpname))) {
         c->had_error = true;
         return false;
     }
     if (!re0_compiler_compile_file(c, path, tmpname)) return false;
-    if (c->backend == &re0_backend_c) {
+    if (c->backend == &re0_backend_c || c->backend == &re0_backend_native) {
         const char *arguments[] = {tmpname, NULL};
         int rc = re0_process_run(tmpname, arguments);
         if (remove(tmpname) != 0 && errno != ENOENT) {

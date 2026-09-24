@@ -23,6 +23,9 @@ typedef struct {
     char **variant_names;
     int *variant_has_payload;
     int variant_count;
+    /* Owned declared payload spellings; NULL entry means legacy/core enum. */
+    char ***variant_types;
+    int *variant_type_counts;
 } Re0EnumDef;
 
 /* ── Trait method signature ── */
@@ -96,7 +99,9 @@ void         re0_model_free(Re0SemanticModel *m);
 void         re0_model_register_struct(Re0SemanticModel *m, const char *name,
                                        char **field_names, char **field_types, int n);
 void         re0_model_register_enum(Re0SemanticModel *m, const char *name,
-                                    char **variant_names, int *has_payload, int n);
+                                     char **variant_names, int *has_payload, int n);
+bool         re0_model_set_enum_payload(Re0EnumDef *def, int variant,
+                                        char **types, int count);
 
 /* ── Trait / Impl ── */
 void         re0_model_register_trait(Re0SemanticModel *m, const char *name,

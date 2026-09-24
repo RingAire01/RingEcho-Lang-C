@@ -4,7 +4,7 @@
 #include "base/vec.h"
 #include <stdbool.h>
 
-typedef struct { char *name; Re0Type *type; bool is_mutable; bool is_function; } Re0Symbol;
+typedef struct { char *name; Re0Type *type; bool is_mutable; bool is_function; bool borrows_local; } Re0Symbol;
 VEC_DECLARE(Re0SymbolVec, Re0Symbol)
 
 typedef struct Re0Scope { Re0SymbolVec symbols; struct Re0Scope *parent; int depth; } Re0Scope;

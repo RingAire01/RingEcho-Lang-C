@@ -1,5 +1,5 @@
 // 回归测试: 含数组的 struct 按值返回(数组曾是栈复合字面量,返回后悬空成垃圾)
-// 修复点: backend_c.c 数组字面量改堆分配 __reo_array_repeat/dup
+// 定长数组内联存储，结构体按值返回时连同数组数据一起复制。
 
 fn check(name: str, ok: bool) {
     if ok {
@@ -33,7 +33,7 @@ fn main() {
     check("data1", r.data[1] == 10);
     check("data2", r.data[2] == 20);
     check("data3", r.data[3] == 30);
-    // 显式元素数组字面量也走堆分配
+    // 显式元素数组字面量也按值存储
     let a = [5, 6, 7];
     check("explicit0", a[0] == 5);
     check("explicit2", a[2] == 7);

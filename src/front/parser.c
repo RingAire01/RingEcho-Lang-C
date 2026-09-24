@@ -114,6 +114,8 @@ static void *parser_alloc_zero(Re0Parser *p, size_t size) {
 static const char *type_token_text(Re0TokenKind k, const char *str_val) {
     if (k == TK_IDENT) return str_val;
     if (k == TK_KW_MUT) return "mut";
+    if (k == TK_KW_CONST) return "const";
+    if (k == TK_KW_FN) return "fn";
     switch (k) {
         case TK_LESS: return "<";
         case TK_GREATER: return ">";
@@ -124,6 +126,7 @@ static const char *type_token_text(Re0TokenKind k, const char *str_val) {
         case TK_COMMA: return ",";
         case TK_SEMICOLON: return ";";
         case TK_AMPERSAND: return "&";
+        case TK_STAR: return "*";
         case TK_ARROW: return "->";
         default: return NULL;
     }
@@ -221,7 +224,13 @@ static Re0Expr *expr_paren(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
     if (check(p, TK_RPAREN)) { advance(p); return re0_expr_make(EXPR_UNIT, span); }
     Re0Expr *e = parse_expr(p);
-    if (check(p, TK_RPAREN)) advance(p);
+    if(check(p,TK_COMMA)) {
+        Re0ExprVec elems;Re0ExprVec_init(&elems);Re0ExprVec_push(&elems,e);
+        while(check(p,TK_COMMA)) {advance(p);if(check(p,TK_RPAREN))break;Re0ExprVec_push(&elems,parse_expr(p));}
+        Re0Expr *tuple=re0_expr_make(EXPR_TUPLE,span);
+        tuple->tuple.count=(int)Re0ExprVec_len(&elems);tuple->tuple.elems=take_expr_vec(p,&elems);e=tuple;
+    }
+    expect(p,TK_RPAREN);
     return e;
 }
 
@@ -275,9 +284,11 @@ static Re0Expr *expr_if(Re0Parser *p) {
 }
 
 static Re0Expr *expr_lambda(Re0Parser *p) {
+    bool empty=check(p,TK_DOUBLEPIPE);
     Re0Span span = peek(p)->span; advance(p);
     Re0Expr *e = re0_expr_make(EXPR_LAMBDA, span);
     e->lambda.param_count = 0; e->lambda.params = NULL;
+    if(empty){e->lambda.body=parse_expr(p);return e;}
     int param_cap = 0;
     if (!check(p, TK_PIPE)) {
         e->lambda.param_count = 1;
@@ -418,7 +429,7 @@ static Re0Expr *parse_primary(Re0Parser *p) {
     if (check(p, TK_LBRACKET)) return expr_array(p);
     if (check(p, TK_KW_IF)) return expr_if(p);
     if (check(p, TK_KW_MATCH)) return parse_match_expr(p);
-    if (check(p, TK_PIPE)) return expr_lambda(p);
+    if (check(p, TK_PIPE) || check(p,TK_DOUBLEPIPE)) return expr_lambda(p);
     /* spawn f(args) → __reo_spawn(f, args...) */
     if (check(p, TK_KW_SPAWN)) {
         Re0Span span = advance(p).span;
@@ -585,7 +596,7 @@ static Re0Stmt *parse_assign(Re0Parser *p) {
         s->field_assign.obj = obj; s->field_assign.field = re0_arena_strdup(p->arena, field.str_val);
         s->field_assign.value = val; return s;
     }
-    Re0BinOpKind op = BINOP_ADD;
+    Re0BinOpKind op = BINOP_ASSIGN_SENTINEL;
     if (check(p, TK_EQUAL)) advance(p);
     else if (check(p, TK_PLUSEQUAL)) { advance(p); op = BINOP_ADD; }
     else if (check(p, TK_MINUSEQUAL)) { advance(p); op = BINOP_SUB; }
@@ -822,11 +833,16 @@ static Re0Stmt *parse_enum(Re0Parser *p) {
         variants[variant_count].type_count = 0;
         if (check(p, TK_LPAREN)) {
             advance(p);
-            Re0Expr **types = NULL; int tc = 0; int tcap = 0;
+            char **types = NULL; int tc = 0; int tcap = 0;
             if (!check(p, TK_RPAREN)) {
-                PARSER_GROW(types, tc, tcap, Re0Expr*);
-                types[tc++] = parse_expr(p);
-                while (check(p, TK_COMMA)) { advance(p); PARSER_GROW(types, tc, tcap, Re0Expr*); types[tc++] = parse_expr(p); }
+                PARSER_GROW(types, tc, tcap, char*);
+                types[tc++] = re0_arena_strdup(p->arena, parse_type_name(p));
+                while (check(p, TK_COMMA)) {
+                    advance(p);
+                    if (check(p, TK_RPAREN)) break;
+                    PARSER_GROW(types, tc, tcap, char*);
+                    types[tc++] = re0_arena_strdup(p->arena, parse_type_name(p));
+                }
             }
             variants[variant_count].types = types;
             variants[variant_count].type_count = tc;
@@ -1091,7 +1107,7 @@ static Re0Stmt *parse_stmt_inner(Re0Parser *p) {
         }
     }
     Re0Expr *e = parse_expr(p);
-    if (e && e->kind == EXPR_INDEX &&
+    if (e && (e->kind == EXPR_INDEX || e->kind==EXPR_SELECT || (e->kind==EXPR_UNARY && e->unary.op==UNOP_DEREF)) &&
         (check(p, TK_EQUAL) || check(p, TK_PLUSEQUAL) || check(p, TK_MINUSEQUAL) ||
          check(p, TK_STAREQUAL) || check(p, TK_SLASHEQUAL))) {
         Re0BinOpKind op = BINOP_ASSIGN_SENTINEL;
@@ -1101,6 +1117,10 @@ static Re0Stmt *parse_stmt_inner(Re0Parser *p) {
         else if (check(p, TK_STAREQUAL)) { advance(p); op = BINOP_MUL; }
         else if (check(p, TK_SLASHEQUAL)) { advance(p); op = BINOP_DIV; }
         Re0Expr *val = parse_expr(p); if (check(p, TK_SEMICOLON)) advance(p);
+        if(e->kind!=EXPR_INDEX) {
+            Re0Stmt *s=re0_stmt_make(STMT_STORE,e->span);
+            s->store.target=e;s->store.value=val;s->store.op=op;return s;
+        }
         Re0Stmt *s = re0_stmt_make(STMT_INDEX_ASSIGN, e->span);
         s->index_assign.target = e->index.target;
         s->index_assign.index = e->index.index;

@@ -81,6 +81,10 @@ FRONT_SRCS := $(FRONT)/lexer.c $(FRONT)/token.c $(FRONT)/parser.c $(FRONT)/ast.c
 ANALYSIS_SRCS := $(ANALYSIS)/sema.c $(ANALYSIS)/scope.c $(ANALYSIS)/model.c $(ANALYSIS)/builtins.c $(ANALYSIS)/lint.c
 BACKEND_SRCS := $(BACKEND)/codegen.c $(BACKEND)/backend_c.c $(BACKEND)/backend_c_type.c $(BACKEND)/backend_c_generic.c $(BACKEND)/backend_c_expr.c $(BACKEND)/backend_c_stmt.c $(BACKEND)/backend_reo.c $(BACKEND)/runtime_c.c $(BACKEND)/runtime_conversion.c $(BACKEND)/backend_c_cast.c
 LSP_DIR := src/lsp
+BACKEND_SRCS += $(BACKEND)/native.c $(BACKEND)/native_lower.c $(BACKEND)/native_x64.c $(BACKEND)/native_elf.c
+ANALYSIS_SRCS += $(ANALYSIS)/layout.c
+BACKEND_SRCS += $(BACKEND)/native_x64_float.c
+BACKEND_SRCS += $(BACKEND)/c_storage.c $(BACKEND)/c_sequence.c
 LSP_SRCS := $(LSP_DIR)/lsp_json.c $(LSP_DIR)/lsp_server.c
 EXTRA_SRCS := $(EXTRA)/re0_event.c $(EXTRA)/re0_manager.c
 
@@ -98,7 +102,7 @@ GC_SRCS := \
 
 # ── 共享库对象文件（不含 main，三个二进制共用） ──
 LIB_SRCS := $(BASE_SRCS) $(FRONT_SRCS) $(ANALYSIS_SRCS) $(BACKEND_SRCS) \
-            $(EXEC)/compiler.c $(EXEC)/build.c $(EXEC)/process.c $(EXEC)/workspace.c \
+            $(EXEC)/compiler.c $(EXEC)/build.c $(EXEC)/process.c $(EXEC)/native_build.c $(EXEC)/workspace.c \
             $(EXEC)/venv.c $(EXEC)/toml_config.c \
             $(LSP_SRCS) $(EXTRA_SRCS) $(GC_SRCS)
 LIB_OBJS := $(patsubst %.c,$(OBJECT_DIR)/%.o,$(LIB_SRCS))
@@ -208,5 +212,33 @@ clean:
 -include $(LIB_OBJS:.o=.d) $(REV_MAIN_OBJ:.o=.d) $(REM_MAIN_OBJ:.o=.d) $(RVM_MAIN_OBJ:.o=.d)
 
 PYTHON ?= python3
+.PHONY: test-match
+.PHONY: test-native
+test-native: $(TARGET_REV)
+	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/native -p "test_*.py"
+
+.PHONY: test-native-unit
+.PHONY: test-layout
+.PHONY: test-layout-faults
+.PHONY: test-c-storage-faults
+test-c-storage-faults: $(LIB_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/native/c_storage_faults.c $(LIB_OBJS) -Wl,--wrap=realloc,--wrap=calloc,--wrap=strdup $(LDFLAGS) -o "$(BUILD_DIR)/c-storage-faults"
+	"$(BUILD_DIR)/c-storage-faults"
+
+test-layout-faults: $(LIB_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/native/layout_faults.c $(LIB_OBJS) -Wl,--wrap=realloc,--wrap=calloc,--wrap=strdup $(LDFLAGS) -o "$(BUILD_DIR)/layout-faults"
+	"$(BUILD_DIR)/layout-faults"
+
+test-layout: $(LIB_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/native/layout_unit.c $(LIB_OBJS) $(LDFLAGS) -o "$(BUILD_DIR)/layout-unit"
+	"$(BUILD_DIR)/layout-unit"
+
+test-native-unit: $(LIB_OBJS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/native/native_unit.c $(LIB_OBJS) -Wl,--wrap=realloc $(LDFLAGS) -o "$(BUILD_DIR)/native-unit"
+	"$(BUILD_DIR)/native-unit"
+
+test-match: $(TARGET_REV)
+	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/match -p "test_*.py"
+
 test-conversion: $(TARGET_REV)
 	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/conversion -p "test_*.py"

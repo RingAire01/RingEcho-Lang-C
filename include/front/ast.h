@@ -34,7 +34,7 @@ typedef enum {
     STMT_IF, STMT_WHILE, STMT_FOR, STMT_RETURN, STMT_BREAK, STMT_CONTINUE,
     STMT_FUNCTION, STMT_STRUCT, STMT_ENUM, STMT_TRAIT, STMT_IMPL,
     STMT_IMPORT, STMT_MODULE, STMT_EXTERN, STMT_CONST,
-    STMT_TYPE_ALIAS, STMT_COMPONENT, STMT_PUB, STMT_ATTRIBUTE,
+    STMT_TYPE_ALIAS, STMT_COMPONENT, STMT_PUB, STMT_ATTRIBUTE, STMT_STORE,
 } Re0StmtKind;
 
 typedef struct Re0Expr Re0Expr;
@@ -59,6 +59,7 @@ struct Re0Expr {
     Re0ExprKind kind; Re0Span span;
     /* Borrowed from the semantic type owner until code generation completes. */
     Re0Type *resolved_type;
+    bool borrows_local;
     union {
         struct { char *name; } ident;
         struct { int64_t val; char *suffix; Re0Integer integer; } int_lit;
@@ -89,7 +90,7 @@ VEC_DECLARE(Re0ExprVec, Re0Expr*)
 typedef struct { char *name; char *ptype; } Re0FnParam;
 typedef struct { char *pname; char *ptype; } Re0FnCallParam;
 typedef struct { char *name; char *type; } Re0StructFieldDecl;
-typedef struct { char *vname; Re0Expr **types; int type_count; } Re0EnumVariantDecl;
+typedef struct { char *vname; char **types; int type_count; } Re0EnumVariantDecl;
 typedef struct { char *mname; Re0FnCallParam *params; int param_count; char *ret_type; } Re0TraitMethodDecl;
 typedef struct { char *name; Re0FnCallParam *params; int param_count; char *ret_type; bool variadic; } Re0ExternFnDecl;
 typedef struct { Re0Expr *cond; Re0Stmt **body; int body_count; } Re0IfBranch;
@@ -102,6 +103,7 @@ struct Re0Stmt {
         struct { char *name; Re0Expr *value; Re0BinOpKind op; } assign;
         struct { Re0Expr *obj; char *field; Re0Expr *value; } field_assign;
         struct { Re0Expr *target; Re0Expr *index; Re0Expr *value; Re0BinOpKind op; } index_assign;
+        struct { Re0Expr *target; Re0Expr *value; Re0BinOpKind op; } store;
         struct { Re0IfBranch *branches; int branch_count; Re0Stmt **else_body; int else_count; } if_stmt;
         struct { Re0Expr *cond; Re0Stmt **body; int body_count; } while_stmt;
         struct { char *var; Re0Expr *iter; Re0Stmt **body; int body_count; } for_stmt;

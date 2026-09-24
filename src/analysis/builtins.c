@@ -46,11 +46,11 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
     add_builtin(r, "str_to_int", "i64", str_s, str_t, 1);
     add_builtin(r, "vec_new", "vec", NULL, NULL, 0);
     add_builtin(r, "vec_push", "unit", vx_s, vx_t, 2);
-    add_builtin(r, "vec_get", "i64", si_s, si_t, 2);
+    add_builtin(r, "vec_get", "i64", (const char*[]){"v","i"}, (const char*[]){"vec","i64"}, 2);
     add_builtin(r, "vec_set", "unit", vix_s, vix_t, 3);
-    add_builtin(r, "vec_pop", "i64", str_s, str_t, 1);
-    add_builtin(r, "vec_last", "i64", str_s, str_t, 1);
-    add_builtin(r, "vec_len", "i64", str_s, str_t, 1);
+    add_builtin(r, "vec_pop", "i64", (const char*[]){"v"}, (const char*[]){"vec"}, 1);
+    add_builtin(r, "vec_last", "i64", (const char*[]){"v"}, (const char*[]){"vec"}, 1);
+    add_builtin(r, "vec_len", "i64", (const char*[]){"v"}, (const char*[]){"vec"}, 1);
     add_builtin(r, "file_read", "str", str_s, str_t, 1);
     add_builtin(r, "file_write", "unit", fd_s, fd_t, 2);
     add_builtin(r, "char_to_str", "str", (const char*[]){"c"}, (const char*[]){"char"}, 1);
@@ -58,7 +58,7 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
     add_builtin(r, "is_digit", "bool", (const char*[]){"c"}, (const char*[]){"char"}, 1);
     add_builtin(r, "is_alpha", "bool", (const char*[]){"c"}, (const char*[]){"char"}, 1);
     add_builtin(r, "is_alnum", "bool", (const char*[]){"c"}, (const char*[]){"char"}, 1);
-    add_builtin(r, "free", "unit", str_s, str_t, 1);
+    add_builtin(r, "free", "unit", (const char*[]){"value"}, (const char*[]){"ptr"}, 1);
     add_builtin(r, "exit", "never", (const char*[]){"code"}, (const char*[]){"i64"}, 1);
     add_builtin(r, "argv_len", "i64", NULL, NULL, 0);
     add_builtin(r, "argv_get", "str", si_s, si_t, 1);
@@ -70,17 +70,17 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
                 (const char*[]){"p"}, (const char*[]){"ptr"}, 1);
     add_builtin(r, "gc_remove_root", "unit",
                 (const char*[]){"p"}, (const char*[]){"ptr"}, 1);
-    /* svec: string vector (char** internally, Aire prefix) */
-    add_builtin(r, "svec_new", "i64", NULL, NULL, 0);
+    /* String vectors use the same precise Vec<str> container machinery. */
+    add_builtin(r, "svec_new", "svec", NULL, NULL, 0);
     add_builtin(r, "svec_push", "unit",
-                (const char*[]){"v","s"}, (const char*[]){"i64","str"}, 2);
-    add_builtin(r, "svec_get", "str", si_s, si_t, 2);
-    add_builtin(r, "svec_len", "i64", str_s, str_t, 1);
-    add_builtin(r, "svec_free", "unit", str_s, str_t, 1);
+                (const char*[]){"v","s"}, (const char*[]){"svec","str"}, 2);
+    add_builtin(r, "svec_get", "str", (const char*[]){"v","i"}, (const char*[]){"svec","i64"}, 2);
+    add_builtin(r, "svec_len", "i64", (const char*[]){"v"}, (const char*[]){"svec"}, 1);
+    add_builtin(r, "svec_free", "unit", (const char*[]){"v"}, (const char*[]){"svec"}, 1);
     /* dir: directory traversal (dirent, cross-platform) */
-    add_builtin(r, "dir_open", "i64", str_s, str_t, 1);
-    add_builtin(r, "dir_next", "str", str_s, str_t, 1);
-    add_builtin(r, "dir_close", "unit", str_s, str_t, 1);
+    add_builtin(r, "dir_open", "ptr", str_s, str_t, 1);
+    add_builtin(r, "dir_next", "str", (const char*[]){"handle"}, (const char*[]){"ptr"}, 1);
+    add_builtin(r, "dir_close", "unit", (const char*[]){"handle"}, (const char*[]){"ptr"}, 1);
     /* path: path operations */
     add_builtin(r, "path_join", "str", ab_s, ab_t, 2);
     add_builtin(r, "path_ext", "str", str_s, str_t, 1);

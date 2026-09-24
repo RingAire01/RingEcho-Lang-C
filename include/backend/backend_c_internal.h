@@ -7,10 +7,12 @@
  *   backend_c_expr.c    - expression code generation
  *   backend_c_stmt.c    - statement code generation + state reset
  *   backend_c.c         - backend glue (c_begin/c_end, Re0Backend)
- * Only these five files may include this header. */
+ * c_storage.c owns precise representations; c_sequence.c lowers sequence access.
+ * This header is private to the C backend. */
 
 #include "backend/backend.h"
 #include "backend/runtime_c.h"
+#include "backend/c_storage.h"
 #include "base/safe.h"
 #include "base/re0_limits.h"
 #include <string.h>
@@ -35,7 +37,14 @@ typedef struct {
 } Re0CVarType;
 typedef struct { char name[128]; char ret_c_type[128]; } FnRetSlot;
 typedef struct { char struct_name[64]; char field[64]; char c_type[128]; } StructFieldSlot;
-typedef struct { char name[64]; Re0Expr *lambda; } LambdaSlot;
+typedef struct {
+    char name[64]; Re0Expr *lambda;
+    char result[128], parameters[64][128];
+    char bindings[8][64], arguments[8][128];
+    int binding_count;
+    int parameter_count;
+    bool emitted;
+} LambdaSlot;
 typedef struct { const char *name; Re0Stmt *def; } GenericStructSlot;
 typedef struct { const char *name; Re0Stmt *def; } GenericFnSlot;
 typedef struct { char name[256]; } InstantiatedSlot;
@@ -44,6 +53,7 @@ typedef struct {
     char type_args[8][64];
     int type_arg_count;
     char mangled[256];
+    bool emitted;
 } PendingInst;
 
 #if defined(_MSC_VER)
@@ -72,8 +82,6 @@ extern RE0_THREAD_LOCAL int g_generic_fn_count;
 extern RE0_THREAD_LOCAL InstantiatedSlot g_instantiated[MAX_INSTANTIATED];
 extern RE0_THREAD_LOCAL int g_instantiated_count;
 extern RE0_THREAD_LOCAL PendingInst g_pending_list[MAX_INSTANTIATED];
-extern RE0_THREAD_LOCAL char g_struct_instances[MAX_INSTANTIATED][256];
-extern RE0_THREAD_LOCAL int g_struct_instance_count;
 extern RE0_THREAD_LOCAL int g_pending_count;
 
 /* shared functions (see the owning file above) */
@@ -108,16 +116,14 @@ void track_struct_field(const char *struct_name, const char *field, const char *
 const char *struct_field_c_type(const char *struct_name, const char *field);
 void register_generic_struct(const char *name, Re0Stmt *def);
 Re0Stmt *find_generic_struct(const char *name);
-bool struct_already_instantiated(const char *mangled);
 const char *instantiate_generic_struct(Re0Codegen *c, const char *base_name, const char *inferred, char *out, size_t out_sz);
-void flush_generic_structs(Re0Codegen *c);
 const char *try_instantiate_generic_struct_init(Re0Codegen *c, Re0Expr *e, char *out, size_t out_sz);
 void register_generic_fn(const char *name, Re0Stmt *def);
 Re0Stmt *find_generic_fn(const char *name);
 bool is_already_instantiated(const char *mangled);
 void mark_instantiated(const char *mangled);
-const char *substitute_one(const char *orig, char **params, char **args, int n);
 void instantiate_generic_fn(Re0Codegen *c, Re0Stmt *def, char **type_args, int type_arg_count);
+bool c_generic_mangle(const char *name, char **arguments, int count, char *out, size_t size);
 void flush_pending_instantiations(Re0Codegen *c);
 void flush_lambdas(Re0Codegen *c);
 const char *try_instantiate_generic_call(Re0Codegen *c, const char *fn_name, Re0Expr **args, int arg_count, char *out, size_t out_sz);

@@ -122,6 +122,8 @@ static void lint_stmt(Re0Stmt *s, Re0ErrorList *errors, int depth) {
         case STMT_EXPR:
             lint_expr(s->expr_stmt.expr);
             break;
+        case STMT_STORE:
+            lint_expr(s->store.target);lint_expr(s->store.value);break;
         case STMT_RETURN:
             if (s->return_stmt.value) lint_expr(s->return_stmt.value);
             break;

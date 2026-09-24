@@ -1,5 +1,6 @@
 #include "backend/backend.h"
 #include "backend/backend_c_internal.h"
+#include "backend/native.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,16 +18,20 @@ void re0_codegen_init(Re0Codegen *c, Re0ErrorList *errors,
     c->gc_mode = RE0_GC_NONE;
     c->had_error = false;
     c->emit_main = true;
+    c->c_return_void = false;
 }
 
 static Re0GcMode scan_gc_mode(Re0StmtVec *checked) {
     for (size_t i = 0; i < Re0StmtVec_len(checked); i++) {
         Re0Stmt *s = checked->data[i];
-        if (s && s->kind == STMT_ATTRIBUTE &&
+        while(s && (s->kind==STMT_PUB || s->kind==STMT_ATTRIBUTE)) {
+        if (s->kind == STMT_ATTRIBUTE &&
             s->attribute.attr_name &&
             strcmp(s->attribute.attr_name, "gc") == 0 &&
             s->attribute.attr_arg) {
             return re0_gc_mode_from_str(s->attribute.attr_arg);
+        }
+        s=s->kind==STMT_PUB?s->pub.inner:s->attribute.inner;
         }
     }
     return RE0_GC_NONE;
@@ -35,25 +40,20 @@ static Re0GcMode scan_gc_mode(Re0StmtVec *checked) {
 static void emit_forward_declarations(Re0Codegen *c, Re0StmtVec *checked) {
     if (c->backend != &re0_backend_c && c->backend != &re0_backend_c_freestanding) return;
     Re0Buffer *b = &c->output;
-    /* First pass: emit struct typedefs and enum typedefs */
+    /* Type declarations are ordered by c_storage; functions can refer forward. */
     for (size_t i = 0; i < Re0StmtVec_len(checked); i++) {
         Re0Stmt *s = checked->data[i];
+        while(s && (s->kind==STMT_PUB || s->kind==STMT_ATTRIBUTE)) s=s->kind==STMT_PUB?s->pub.inner:s->attribute.inner;
         if (!s) continue;
-        if (s->kind == STMT_STRUCT && s->struct_decl.type_param_count == 0) {
-            re0_buffer_write_fmt(b, "typedef struct %s %s;\n", s->struct_decl.name, s->struct_decl.name);
-        } else if (s->kind == STMT_ENUM) {
-            re0_buffer_write_fmt(b, "typedef struct %s %s;\n", s->enum_decl.name, s->enum_decl.name);
+        if(s->kind==STMT_MODULE) {
+            Re0StmtVec children={.data=s->module.body,.len=(size_t)s->module.body_count,.cap=(size_t)s->module.body_count};
+            emit_forward_declarations(c,&children);continue;
         }
-    }
-    /* Second pass: pre-track function return types and emit forward prototypes */
-    for (size_t i = 0; i < Re0StmtVec_len(checked); i++) {
-        Re0Stmt *s = checked->data[i];
-        if (!s) continue;
         if (s->kind == STMT_FUNCTION && s->function.type_param_count == 0) {
             track_fn_ret(s->function.name, s->function.ret_type ? s->function.ret_type : "unit");
             const char *fn_name = s->function.name;
             if (strcmp(fn_name, "main") == 0) fn_name = "main_";
-            const char *ret_c = reo_type_to_c(s->function.ret_type);
+            const char *ret_c = c_storage_return(s->function.ret_type);
             re0_buffer_write_fmt(b, "%s %s(", ret_c, fn_name);
             if (s->function.param_count == 0) {
                 re0_buffer_write_str(b, "void");
@@ -72,13 +72,18 @@ static void emit_forward_declarations(Re0Codegen *c, Re0StmtVec *checked) {
 
 bool re0_codegen_generate(Re0Codegen *c, Re0StmtVec *checked) {
     if (!c || !c->backend || !checked) return false;
+    if (c->backend == &re0_backend_native) return re0_native_generate(c, checked);
     c->gc_mode = scan_gc_mode(checked);
     c->backend->begin(c);
+    if (c->backend == &re0_backend_c || c->backend == &re0_backend_c_freestanding)
+        c_storage_begin(c, checked);
     emit_forward_declarations(c, checked);
     for (size_t i = 0; i < Re0StmtVec_len(checked); i++) {
         c->backend->gen_stmt(c, checked->data[i], 0);
     }
     c->backend->end(c);
+    if (c->backend == &re0_backend_c || c->backend == &re0_backend_c_freestanding)
+        c_storage_finish(c);
     if (re0_buffer_failed(&c->output)) {
         re0_error_append(c->errors, RE0_ERR_INTERNAL, RE0_SPAN_ZERO, NULL,
                          "out of memory while generating output");

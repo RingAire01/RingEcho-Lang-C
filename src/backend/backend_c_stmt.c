@@ -3,12 +3,14 @@
 /* statement code generation + backend state reset. */
 
 void c_gen_body(Re0Codegen *c, Re0Stmt **body, int count, int depth) {
+    int saved=var_type_count;
     for (int i = 0; i < count; i++) c->backend->gen_stmt(c, body[i], depth);
+    while(var_type_count>saved) free(var_types[--var_type_count].name);
 }
 
 void c_gen_extern_decl(Re0Codegen *c, const Re0ExternFnDecl *decl) {
     Re0Buffer *b = &c->output;
-    const char *return_type = decl->ret_type ? reo_type_to_c(decl->ret_type) : "void";
+    const char *return_type = c_storage_return(decl->ret_type);
     re0_buffer_write_fmt(b, "extern %s %s(", return_type, decl->name);
     if (decl->param_count == 0 && !decl->variadic) {
         re0_buffer_write_str(b, "void");
@@ -32,7 +34,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
         case STMT_LET: {
             re0_buffer_write_indent(b, depth);
             /* determine C type */
-            const char *ctype = "int64_t";
+            const char *ctype = NULL;
             char inferred_type[128];
             char ename[128], vname[128];   /* must stay alive until write_fmt/track_var below, avoid stack out-of-scope */
             if (s->let_stmt.init && s->let_stmt.init->kind == EXPR_STRUCT_INIT) {
@@ -54,17 +56,18 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                      infer_expr_c_type(s->let_stmt.init, inferred_type,
                                        sizeof(inferred_type)))
                 ctype = inferred_type;
+            if (!ctype) {
+                re0_error_append(c->errors, RE0_ERR_SEMANTIC, s->span, NULL,
+                                 "C backend cannot represent local type '%s'",
+                                 s->let_stmt.type ? s->let_stmt.type : "unknown");
+                c->had_error = true;
+                break;
+            }
             re0_buffer_write_fmt(b, "%s %s", ctype, s->let_stmt.name);
             if (s->let_stmt.init) {
                 re0_buffer_write_str(b, " = ");
-                if (ctype && strstr(ctype, "*") && s->let_stmt.init->kind != EXPR_STRING) {
-                    re0_buffer_write_fmt(b, "(%s)(uintptr_t)(", ctype);
-                    c_gen_expr(c, s->let_stmt.init);
-                    re0_buffer_write_char(b, ')');
-                } else {
-                    c_gen_expr(c, s->let_stmt.init);
-                }
-            }
+                c_gen_expr(c, s->let_stmt.init);
+            } else re0_buffer_write_str(b," = {0}");
             re0_buffer_write_str(b, ";\n");
             track_var(s->let_stmt.name, ctype);
             break;
@@ -85,7 +88,21 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
         case STMT_ASSIGN:
             re0_buffer_write_indent(b, depth);
             re0_buffer_write_fmt(b, "%s = ", s->assign.name);
-            c_gen_expr(c, s->assign.value);
+            if (s->assign.op == BINOP_ASSIGN_SENTINEL) {
+                c_gen_expr(c, s->assign.value);
+            } else {
+                /* Reuse binary lowering so += etc. preserve wrapping and
+                 * checked division semantics instead of discarding the op. */
+                Re0Expr left = {.kind = EXPR_IDENT, .span = s->span};
+                left.ident.name = s->assign.name;
+                Re0Type result = {.kind = c_expr_scalar_kind(&left)};
+                Re0Expr binary = {.kind = EXPR_BINARY, .span = s->span,
+                                  .resolved_type = &result};
+                binary.binary.op = s->assign.op;
+                binary.binary.left = &left;
+                binary.binary.right = s->assign.value;
+                c_gen_expr(c, &binary);
+            }
             re0_buffer_write_str(b, ";\n");
             break;
         case STMT_FIELD_ASSIGN:
@@ -99,39 +116,10 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             break;
         case STMT_INDEX_ASSIGN:
             re0_buffer_write_indent(b, depth);
-            /* array element assignment: bounds-checked via fat pointer */
-            {
-                char base[128];
-                bool base_known = infer_expr_c_type(s->index_assign.target, base, sizeof(base));
-                bool dbl = base_known && strcmp(base, "__reo_arrf_t") == 0;
-                bool wide = base_known && strcmp(base, "__reo_arr128_t") == 0;
-                if (base_known && (strcmp(base, "__reo_arr_t") == 0 || dbl || wide)) {
-                    re0_buffer_write_fmt(b, "%s(&(", wide ? "__reo_arr128_set" : dbl ? "__reo_arrf_set" : "__reo_arr_set");
-                    c_gen_expr(c, s->index_assign.target);
-                    re0_buffer_write_str(b, "), (int64_t)(");
-                    c_gen_expr(c, s->index_assign.index);
-                    re0_buffer_write_str(b, "), ");
-                    if (s->index_assign.op == BINOP_ASSIGN_SENTINEL) {
-                        c_gen_expr(c, s->index_assign.value);
-                    } else if (s->index_assign.op == BINOP_ADD) {                        /* compound += : read, add, write */
-                        re0_buffer_write_fmt(b, "%s(&(", wide ? "__reo_arr128_get" : dbl ? "__reo_arrf_get" : "__reo_arr_get");
-                        c_gen_expr(c, s->index_assign.target);
-                        re0_buffer_write_str(b, "), (int64_t)(");
-                        c_gen_expr(c, s->index_assign.index);
-                        re0_buffer_write_str(b, ")) + ");
-                        c_gen_expr(c, s->index_assign.value);
-                    }
-                    re0_buffer_write_str(b, ");\n");
-                    break;
-                }
-            }
-            c_gen_expr(c, s->index_assign.target);
-            re0_buffer_write_char(b, '[');
-            c_gen_expr(c, s->index_assign.index);
-            re0_buffer_write_str(b, "] = ");
-            c_gen_expr(c, s->index_assign.value);
-            re0_buffer_write_str(b, ";\n");
+            c_gen_sequence_set(c,s);
             break;
+        case STMT_STORE:
+            re0_buffer_write_indent(b,depth);c_gen_store(c,s->store.target,s->store.value,s->store.op);break;
         case STMT_EXPR:
             re0_buffer_write_indent(b, depth);
             c_gen_expr(c, s->expr_stmt.expr);
@@ -139,6 +127,10 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             break;
         case STMT_RETURN:
             re0_buffer_write_indent(b, depth);
+            if(c->c_return_void) {
+                if(s->return_stmt.value){re0_buffer_write_str(b,"(void)(");c_gen_expr(c,s->return_stmt.value);re0_buffer_write_str(b,"); ");}
+                re0_buffer_write_str(b,"return;\n");break;
+            }
             if (s->return_stmt.value) {
                 re0_buffer_write_str(b, "return ");
                 c_gen_expr(c, s->return_stmt.value);
@@ -182,6 +174,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             re0_buffer_write_str(b, "}\n");
             break;
         case STMT_FOR: {
+            int saved_variables=var_type_count;
             re0_buffer_write_indent(b, depth);
             Re0Expr *iter = s->for_stmt.iter;
             /* range iteration: for i in start..end */
@@ -206,37 +199,30 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                                      s->for_stmt.var, t, s->for_stmt.var);
                 /* inside body, var_val replaces ch's value */
             }
-            /* Vec iteration: for x in v - walk i64 slots */
+            /* Containers retain their concrete element type. */
             else if (iter && expr_is_vec(iter)) {
                 int t = c->temp_counter++;
-                re0_buffer_write_fmt(b, "{ __reo_vec_t* __v%d = ", t);
+                char type[128]; infer_expr_c_type(iter,type,sizeof(type));
+                const CStorageType *v=c_storage_find(type);
+                re0_buffer_write_fmt(b, "{ %s __v%d = ",type,t);
                 c_gen_expr(c, iter);
                 re0_buffer_write_fmt(b, "; for (int64_t __i%d = 0; __i%d < __v%d->len; __i%d++) {\n",
                                      t, t, t, t);
-                re0_buffer_write_fmt(b, "int64_t %s = __v%d->data[__i%d];\n",
-                                     s->for_stmt.var, t, t);
+                re0_buffer_write_fmt(b, "%s %s = __v%d->data[__i%d];\n",v->element,s->for_stmt.var,t,t);
+                track_var(s->for_stmt.var,v->element);
             }
-            /* fat-pointer array iteration: for x in [..] / arr */
-            else if (iter && (iter->kind == EXPR_ARRAY || iter->kind == EXPR_ARRAY_REPEAT ||
-                              (iter->kind == EXPR_IDENT && expr_is_array_var(iter)))) {
+            else if (iter && expr_is_array_var(iter)) {
                 int t = c->temp_counter++;
                 char at[128];
-                bool dbl = infer_expr_c_type(iter, at, sizeof(at)) &&
-                           strcmp(at, "__reo_arrf_t") == 0;
-                bool wide = strcmp(at, "__reo_arr128_t") == 0;
-                re0_buffer_write_fmt(b, "{ %s __a%d = ", wide ? "__reo_arr128_t" : dbl ? "__reo_arrf_t" : "__reo_arr_t", t);
+                infer_expr_c_type(iter,at,sizeof(at));
+                const CStorageType *seq=c_storage_find(at);
+                re0_buffer_write_fmt(b, "{ %s __a%d = ",at,t);
                 c_gen_expr(c, iter);
-                re0_buffer_write_fmt(b, "; for (int64_t __i%d = 0; __i%d < __a%d.len; __i%d++) {\n",
-                                     t, t, t, t);
-                Re0Type *element = iter->resolved_type && iter->resolved_type->kind == RE0_TYPE_ARRAY
-                    ? iter->resolved_type->array.inner : iter->resolved_type && iter->resolved_type->kind == RE0_TYPE_SLICE
-                    ? iter->resolved_type->slice.inner : NULL;
-                bool signed_wide = wide && element && element->kind == RE0_TYPE_I128;
-                const char *element_type = wide ? (signed_wide ? "__int128" : "unsigned __int128") : dbl ? "double" : "int64_t";
-                re0_buffer_write_fmt(b, "%s %s = %s__a%d.data[__i%d]%s;\n", element_type,
-                                     s->for_stmt.var, signed_wide ? "__reo_conv_signed(" : "", t, t,
-                                     signed_wide ? ", 128)" : "");
-                track_var(s->for_stmt.var, element_type);
+                re0_buffer_write_fmt(b,"; for (size_t __i%d=0; __i%d < ",t,t);
+                if(seq->kind==C_STORAGE_ARRAY) re0_buffer_write_fmt(b,"%zu",seq->length);
+                else re0_buffer_write_fmt(b,"__a%d.len",t);
+                re0_buffer_write_fmt(b,"; __i%d++) {\n%s %s = __a%d.data[__i%d];\n",t,seq->element,s->for_stmt.var,t,t);
+                track_var(s->for_stmt.var,seq->element);
             }
             /* numeric iteration: for i in count */
             else {
@@ -253,6 +239,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 (expr_is_string(iter) || expr_is_vec(iter) || expr_is_array_var(iter) ||
                  iter->kind == EXPR_ARRAY || iter->kind == EXPR_ARRAY_REPEAT))
                 re0_buffer_write_str(b, "}\n");
+            while(var_type_count>saved_variables) free(var_types[--var_type_count].name);
             break;
         }
         case STMT_FUNCTION: {
@@ -265,8 +252,9 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                          s->function.ret_type ? s->function.ret_type : "unit");
             const char *fn_name = s->function.name;
             if (strcmp(fn_name, "main") == 0) fn_name = "main_";
-            const char *ret_c = reo_type_to_c(s->function.ret_type);
+            const char *ret_c = c_storage_return(s->function.ret_type);
             re0_buffer_write_fmt(b, "%s %s(", ret_c, fn_name);
+            if(!s->function.param_count) re0_buffer_write_str(b,"void");
             for (int i = 0; i < s->function.param_count; i++) {
                 if (i > 0) re0_buffer_write_str(b, ", ");
                 re0_buffer_write_fmt(b, "%s %s",
@@ -281,7 +269,9 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             clear_var_types();
             for (int i = 0; i < s->function.param_count; i++)
                 track_var(s->function.params[i].name, reo_type_to_c(s->function.params[i].ptype));
+            bool previous_return_void=c->c_return_void;c->c_return_void=strcmp(ret_c,"void")==0;
             c_gen_body(c, s->function.body, s->function.body_count, 1);
+            c->c_return_void=previous_return_void;
             re0_buffer_write_str(b, "}\n\n");
             break;
         }
@@ -291,24 +281,10 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 register_generic_struct(s->struct_decl.name, s);
                 break;
             }
-            re0_buffer_write_fmt(b, "struct %s { ", s->struct_decl.name);
-            for (int i = 0; i < s->struct_decl.field_count; i++) {
-                re0_buffer_write_fmt(b, "%s %s; ",
-                                    reo_type_to_c(s->struct_decl.fields[i].type),
-                                    s->struct_decl.fields[i].name);
-                track_struct_field(s->struct_decl.name,
-                                   s->struct_decl.fields[i].name,
-                                   s->struct_decl.fields[i].type);
-            }
-            re0_buffer_write_str(b, "};\n");
+            (void)reo_type_to_c(s->struct_decl.name);
             break;
         case STMT_ENUM:
-            re0_buffer_write_fmt(b, "struct %s { int64_t tag; union { ", s->enum_decl.name);
-            for (int i = 0; i < s->enum_decl.variant_count; i++) {
-                if (s->enum_decl.variants[i].type_count > 0)
-                    re0_buffer_write_fmt(b, "int64_t v%d; ", i);
-            }
-            re0_buffer_write_str(b, "} u; };\n");
+            (void)reo_type_to_c(s->enum_decl.name);
             break;
         case STMT_EXTERN:
             for (int i = 0; i < s->extern_.func_count; i++)
@@ -324,7 +300,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
                 Re0Stmt *m = s->impl.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
                 char self_ptr_type[160];
-                snprintf(self_ptr_type, sizeof(self_ptr_type), "%s*", s->impl.name);
+                snprintf(self_ptr_type, sizeof(self_ptr_type), "&mut %s", s->impl.name);
                 /* temp-patch AST, generate, restore: leaving the stack buffer
                  * pointer in the AST would dangle on any later traversal
                  * (LSP re-checks, IR backend pass, ...) */
@@ -360,21 +336,13 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             if (s->module.body) c_gen_body(c, s->module.body, s->module.body_count, depth);
             break;
         case STMT_COMPONENT: {
-            /* generate struct typedef from state fields */
-            if (s->component.state_count > 0) {
-                re0_buffer_write_str(b, "typedef struct { ");
-                for (int i = 0; i < s->component.state_count; i++)
-                    re0_buffer_write_fmt(b, "%s %s; ",
-                                        reo_type_to_c(s->component.state[i].type),
-                                        s->component.state[i].name);
-                re0_buffer_write_fmt(b, "} %s;\n", s->component.name);
-            }
+            (void)reo_type_to_c(s->component.name);
             /* set self param type + generate method with mangled name (same as STMT_IMPL) */
             for (int i = 0; i < s->component.method_count; i++) {
                 Re0Stmt *m = s->component.methods[i];
                 if (!m || m->kind != STMT_FUNCTION) continue;
                 char self_ptr_type[160];
-                snprintf(self_ptr_type, sizeof(self_ptr_type), "%s*", s->component.name);
+                snprintf(self_ptr_type, sizeof(self_ptr_type), "&mut %s", s->component.name);
                 /* temp-patch AST, generate, restore: see STMT_IMPL */
                 int self_idx = -1;
                 for (int j = 0; j < m->function.param_count; j++) {
@@ -417,7 +385,6 @@ void reset_c_state(void) {
     g_lambda_count = 0;
     g_lambda_counter = 0;
     g_generic_struct_count = 0;
-    g_struct_instance_count = 0;
     g_generic_fn_count = 0;
     g_instantiated_count = 0;
     g_pending_count = 0;

@@ -1,0 +1,31 @@
+fn factorial(n: i64) -> i64 {
+    if n <= 1 { return 1; }
+    return n * factorial(n - 1);
+}
+
+fn sum6(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    return a + b + c + d + e + f;
+}
+
+fn main() {
+    let assigned: i64 = 9;
+    assigned = 2;
+    assert(assigned == 2);
+    assigned *= 3;
+    assigned -= 2;
+    assigned /= 2;
+    assert(assigned == 2);
+    assert(factorial(10) == 3628800);
+    assert(sum6(1, factorial(3), 3, 4, 5, 6) == 25);
+    let i: i64 = 0;
+    let sum: i64 = 0;
+    while i < 10 {
+        i += 1;
+        if i == 3 { continue; }
+        if i == 8 { break; }
+        sum += i;
+    }
+    assert(sum == 25);
+    assert((false && (1 / 0 == 0)) == false);
+    assert(true || (1 / 0 == 0));
+}

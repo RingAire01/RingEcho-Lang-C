@@ -8,5 +8,6 @@
 #include "exec/workspace.h"
 
 #include "exec/process.h"
+#include "exec/native_build.h"
 
 #endif

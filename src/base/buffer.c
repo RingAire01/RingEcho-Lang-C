@@ -1,5 +1,4 @@
 #include "base/buffer.h"
-#include "base/safe.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -27,7 +26,8 @@ bool re0_buffer_reserve(Re0Buffer *b, size_t extra) {
         if (nc > SIZE_MAX / 2) { nc = need; break; }
         nc *= 2;
     }
-    char *nd = (char*)xrealloc(b->data, nc);
+    /* Buffer callers propagate failed; do not abort before they can do so. */
+    char *nd = (char*)realloc(b->data, nc);
     if (!nd) {
         b->failed = true;
         return false;

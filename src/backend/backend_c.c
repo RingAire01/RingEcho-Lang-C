@@ -30,7 +30,7 @@ static void c_begin(Re0Codegen *c) {
             "#define __REO_DEPTH_GUARD __reo_depth_guard_t __reo_dg __attribute__((cleanup(__reo_depth_leave))) = __reo_depth_enter()\n\n"
             "typedef struct { int64_t tag; union { int64_t v0; } u; } Option;\n"
             "typedef struct { int64_t tag; union { int64_t v0; } u; } Result;\n"
-            "typedef int64_t __reo_fn_ptr;\n\n");
+            "\n");
         re0_buffer_write_str(&c->output, "#include <string.h>\n#define __REO_CONV_ALLOC malloc\n#define __REO_CONV_FREE free\n#define __REO_FREESTANDING 1\n");
         re0_runtime_conversion_emit(&c->output);
         g_fwd_insert_pos = c->output.len;
@@ -44,9 +44,13 @@ static void c_begin(Re0Codegen *c) {
 
 static void c_end(Re0Codegen *c) {
     /* generate all pending generic function bodies (before main) */
-    flush_pending_instantiations(c);
-    flush_generic_structs(c);
-    flush_lambdas(c);
+    for(int pass=0;pass<MAX_INSTANTIATED+MAX_LAMBDAS && !c->had_error;pass++) {
+        flush_pending_instantiations(c);flush_lambdas(c);
+        bool pending=false;
+        for(int i=0;i<g_pending_count;i++)pending=pending || !g_pending_list[i].emitted;
+        for(int i=0;i<g_lambda_count;i++)pending=pending || !g_lambdas[i].emitted;
+        if(!pending)break;
+    }
 
     if (c->backend == &re0_backend_c_freestanding) return;
 

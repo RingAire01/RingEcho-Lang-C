@@ -3,6 +3,7 @@
 
 #include "analysis/scope.h"
 #include "analysis/model.h"
+#include "analysis/layout.h"
 #include "analysis/builtins.h"
 #include "analysis/lint.h"
 #include "analysis/sema.h"

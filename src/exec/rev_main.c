@@ -1,5 +1,6 @@
 #include "base/safe.h"
 #include "exec/compiler.h"
+#include "backend/native.h"
 #include "platform.h"
 #include "exec/venv.h"
 #include "exec/toml_config.h"
@@ -23,6 +24,8 @@ static void print_usage(void) {
     printf("  rev build [file.reo] [-o out]        Compile to executable/asm\n");
     printf("  rev build [file.reo] --shared         Compile to shared library (.so/.dll)\n");
     printf("  rev build [file.reo] --target wasm    Compile to WebAssembly (WASI)\n");
+    printf("  rev build <file.reo> --backend native [--emit obj|exe] [-o out]\n");
+    printf("    Experimental target: x86_64-unknown-linux-gnu (Linux host)\n");
     printf("  rev check <file.reo>                 Type check only\n");
     printf("  rev lsp                              Start LSP server\n");
     printf("  rev venv <init|activate>             Manage virtual environment\n");
@@ -274,33 +277,62 @@ int main(int argc, char **argv) {
                  RE0_PLATFORM_PATH_SEPARATOR[0], RE0_PLATFORM_EXECUTABLE_SUFFIX);
     }
 
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--target") == 0 && i + 1 < argc) {
-            if (strcmp(argv[i + 1], "reo") == 0) {
+    const char *target_name = NULL, *backend_name = NULL, *emit_name = NULL;
+    bool explicit_output = false;
+    for (int i = 3; i < argc; i++) {
+        const char *option = argv[i];
+        if (strcmp(option, "--shared") == 0) { shared = true; continue; }
+        if (strcmp(option, "--target") != 0 && strcmp(option, "--backend") != 0 &&
+            strcmp(option, "--emit") != 0 && strcmp(option, "-o") != 0) {
+            fprintf(stderr, "unknown option: %s\n", option); return 1;
+        }
+        if (i + 1 == argc || !*argv[i + 1] || argv[i + 1][0] == '-') {
+            fprintf(stderr, "missing value for %s\n", option); return 1;
+        }
+        const char *value = argv[++i];
+        if (strcmp(option, "--target") == 0) target_name = value;
+        else if (strcmp(option, "--backend") == 0) backend_name = value;
+        else if (strcmp(option, "--emit") == 0) emit_name = value;
+        else { output = value; explicit_output = true; }
+    }
+    if (backend_name) {
+        if (strcmp(backend_name, "native") == 0) backend = &re0_backend_native;
+        else if (strcmp(backend_name, "c") != 0) {
+            fprintf(stderr, "unknown backend: %s\n", backend_name); return 1;
+        }
+    }
+    bool emit_object = emit_name && strcmp(emit_name, "obj") == 0;
+    if (backend == &re0_backend_native) {
+        if ((target_name && strcmp(target_name, "x86_64-unknown-linux-gnu") != 0) ||
+            shared || (emit_name && !emit_object && strcmp(emit_name, "exe") != 0) ||
+            (emit_object && strcmp(cmd, "run") == 0)) {
+            fprintf(stderr, "native backend supports x86_64-unknown-linux-gnu, --emit obj|exe, and no --shared\n"); return 1;
+        }
+#if !defined(__linux__) || !defined(__x86_64__)
+        if (strcmp(cmd, "run") == 0) {
+            fprintf(stderr, "native run requires an x86-64 Linux host\n"); return 1;
+        }
+#endif
+        if (emit_object && !explicit_output) output = "output.o";
+    } else {
+        if (emit_name) { fprintf(stderr, "--emit currently requires --backend native\n"); return 1; }
+        if (target_name) {
+            if (strcmp(target_name, "reo") == 0) {
                 backend = &re0_backend_reo;
-                char *name = strrchr(default_output, '/');
-                if (!name) name = strrchr(default_output, '\\');
-                if (name) *(name + 1) = '\0';
-                strncat(default_output, "output.reo.asm",
-                        sizeof(default_output) - strlen(default_output) - 1);
-                output = default_output;
-            }
-            else if (strcmp(argv[i + 1], "c") == 0) backend = &re0_backend_c;
-            else if (strcmp(argv[i + 1], "c-freestanding") == 0)
-                backend = &re0_backend_c_freestanding;
-            else if (strcmp(argv[i + 1], "wasm") == 0) {
-                backend = &re0_backend_c_freestanding;
-                wasm = true;
+                if (!explicit_output) output = "output.reo.asm";
+            } else if (strcmp(target_name, "c-freestanding") == 0) backend = &re0_backend_c_freestanding;
+            else if (strcmp(target_name, "wasm") == 0) { backend = &re0_backend_c_freestanding; wasm = true; }
+            else if (strcmp(target_name, "c") != 0) {
+                fprintf(stderr, "unknown C/legacy target: %s\n", target_name); return 1;
             }
         }
-        if (strcmp(argv[i], "--shared") == 0) shared = true;
-        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
     }
 
     Re0Compiler comp;
     re0_compiler_init(&comp, backend);
     comp.shared = shared;
     comp.wasm = wasm;
+    comp.emit_object = emit_object;
 
     bool ok = false;
     if (strcmp(cmd, "run") == 0) ok = re0_compiler_run(&comp, path);

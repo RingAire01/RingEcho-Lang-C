@@ -1,5 +1,7 @@
 #include "base/safe.h"
 #include "base/types.h"
+#include "base/re0_limits.h"
+#include <errno.h>
 #include "base/arena.h"
 #include <stdlib.h>
 #include <string.h>
@@ -225,7 +227,7 @@ bool re0_type_equal(const Re0Type *a, const Re0Type *b) {
         case RE0_TYPE_U64: case RE0_TYPE_U128: case RE0_TYPE_USIZE:
         case RE0_TYPE_F32: case RE0_TYPE_F64:
         case RE0_TYPE_BOOL: case RE0_TYPE_CHAR: case RE0_TYPE_STR:
-        case RE0_TYPE_PTR: case RE0_TYPE_UNIT: case RE0_TYPE_NEVER:
+        case RE0_TYPE_UNIT: case RE0_TYPE_NEVER:
         case RE0_TYPE_UNKNOWN:
             return true;
 
@@ -256,6 +258,8 @@ bool re0_type_equal(const Re0Type *a, const Re0Type *b) {
         case RE0_TYPE_REFERENCE:
             return a->ref_.mutable_ == b->ref_.mutable_
                 && re0_type_equal(a->ref_.inner, b->ref_.inner);
+        case RE0_TYPE_PTR:
+            return a->ptr_.mutable_ == b->ptr_.mutable_ && re0_type_equal(a->ptr_.inner,b->ptr_.inner);
 
         case RE0_TYPE_FN: {
             if (a->func.param_count != b->func.param_count) return false;
@@ -289,6 +293,14 @@ bool re0_type_equal(const Re0Type *a, const Re0Type *b) {
 bool re0_type_coercible(const Re0Type *from, const Re0Type *to) {
     if (re0_type_equal(from, to)) return true;
     if (!from || !to) return false;
+    if (from->kind==RE0_TYPE_REFERENCE && to->kind==RE0_TYPE_REFERENCE)
+        return (!to->ref_.mutable_ || from->ref_.mutable_) && re0_type_equal(from->ref_.inner,to->ref_.inner);
+    if (to->kind==RE0_TYPE_PTR && from->kind==RE0_TYPE_REFERENCE)
+        return (!to->ptr_.inner || re0_type_equal(from->ref_.inner,to->ptr_.inner)) &&
+               (!to->ptr_.inner || !to->ptr_.mutable_ || from->ref_.mutable_);
+    if(from->kind==RE0_TYPE_PTR && to->kind==RE0_TYPE_PTR)
+        return (!to->ptr_.inner || re0_type_equal(from->ptr_.inner,to->ptr_.inner)) &&
+               (!to->ptr_.mutable_ || from->ptr_.mutable_);
     /* Only conversions preserving every possible source value are implicit. */
     if (re0_type_is_integer(from->kind) && re0_type_is_integer(to->kind)) {
         size_t source = re0_type_sizeof(from->kind), target = re0_type_sizeof(to->kind);
@@ -307,7 +319,9 @@ bool re0_type_coercible(const Re0Type *from, const Re0Type *to) {
     return false;
 }
 
-static bool re0_split_parse(const char *s, Re0Type **out, int *out_n, int max) {
+static Re0Type *type_parse_depth(const char *s, unsigned depth);
+
+static bool split_parse_impl(const char *s, Re0Type **out, int *out_n, int max, unsigned depth) {
     int n = 0;
     int sp = 0;
     char st[64];
@@ -345,11 +359,12 @@ static bool re0_split_parse(const char *s, Re0Type **out, int *out_n, int max) {
                 if (!sub) return false;
                 memcpy(sub, a, sl);
                 sub[sl] = '\0';
-                Re0Type *t = re0_type_parse(sub);
+                Re0Type *t = type_parse_depth(sub, depth + 1);
                 free(sub);
                 if (!t) return false;
                 out[n++] = t;
-            }
+                *out_n = n;
+            } else return false;
             start = p + 1;
         }
         prev = p;
@@ -368,18 +383,27 @@ static bool re0_split_parse(const char *s, Re0Type **out, int *out_n, int max) {
             if (!sub) return false;
             memcpy(sub, a, sl);
             sub[sl] = '\0';
-            Re0Type *t = re0_type_parse(sub);
+            Re0Type *t = type_parse_depth(sub, depth + 1);
             free(sub);
             if (!t) return false;
             out[n++] = t;
+            *out_n = n;
         }
     }
     *out_n = n;
     return true;
 }
 
-Re0Type *re0_type_parse(const char *s) {
-    if (!s) return NULL;
+static bool re0_split_parse(const char *s, Re0Type **out, int *out_n, int max, unsigned depth) {
+    *out_n = 0;
+    if (split_parse_impl(s, out, out_n, max, depth)) return true;
+    for (int i = 0; i < *out_n; i++) re0_type_free_tree(out[i]);
+    *out_n = 0;
+    return false;
+}
+
+static Re0Type *type_parse_depth(const char *s, unsigned depth) {
+    if (!s || depth >= RE0_MAX_TYPE_DEPTH) return NULL;
     while (*s == ' ' || *s == '\t') s++;
     size_t len = strlen(s);
     while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t')) len--;
@@ -411,6 +435,11 @@ Re0Type *re0_type_parse(const char *s) {
         return re0_type_make(RE0_TYPE_STR, NULL);
     }
     if (strcmp(buf, "ptr") == 0) { free(buf); return re0_type_make(RE0_TYPE_PTR, NULL); }
+    if (strcmp(buf, "vec") == 0 || strcmp(buf, "svec") == 0) {
+        Re0Type *element = re0_type_make(strcmp(buf, "svec") == 0 ? RE0_TYPE_STR : RE0_TYPE_I64, NULL);
+        free(buf);
+        return re0_type_make_vec(element, NULL);
+    }
     if (strcmp(buf, "unit") == 0 || strcmp(buf, "void") == 0) {
         free(buf);
         return re0_type_make(RE0_TYPE_UNIT, NULL);
@@ -435,35 +464,51 @@ Re0Type *re0_type_parse(const char *s) {
             while (*rest == ' ' || *rest == '\t') rest++;
         }
         if (*rest == '\0') { free(buf); return NULL; }
-        Re0Type *inner = re0_type_parse(rest);
+        Re0Type *inner = type_parse_depth(rest, depth + 1);
         if (!inner) { free(buf); return NULL; }
         Re0Type *r = re0_type_make_reference(inner, is_mut, NULL);
         free(buf);
         return r;
     }
-    if (buf[0] == '*') { free(buf); return re0_type_make(RE0_TYPE_PTR, NULL); }
-
-    if (len > 3 && memcmp(buf, "fn(", 3) == 0) {
-        int depth = 0;
-        const char *cp = buf + 3;
+    if (buf[0] == '*') {
+        const char *rest = buf + 1;
+        while (*rest == ' ' || *rest == '\t') rest++;
+        bool mutable_ = true;
+        if (strncmp(rest, "const ", 6) == 0) { mutable_ = false; rest += 6; }
+        else if (strncmp(rest, "mut ", 4) == 0) rest += 4;
+        Re0Type *inner = type_parse_depth(rest, depth + 1);
+        if (!inner) { free(buf); return NULL; }
+        Re0Type *pointer = re0_type_make(RE0_TYPE_PTR, NULL);
+        pointer->ptr_.inner = inner; pointer->ptr_.mutable_ = mutable_;
+        free(buf); return pointer;
+    }
+    const char *fn_open = NULL;
+    if (len > 2 && memcmp(buf, "fn", 2) == 0) {
+        const char *q = buf + 2;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q == '(') fn_open = q;
+    }
+    if (fn_open) {
+        int parens = 0;
+        const char *cp = fn_open + 1;
         const char *close = NULL;
         for (; *cp; cp++) {
-            if (*cp == '(') depth++;
+            if (*cp == '(') parens++;
             else if (*cp == ')') {
-                if (depth == 0) { close = cp; break; }
-                depth--;
+                if (parens == 0) { close = cp; break; }
+                parens--;
             }
         }
         if (!close) { free(buf); return NULL; }
-        size_t pl = (size_t)(close - (buf + 3));
+        size_t pl = (size_t)(close - (fn_open + 1));
         char *params = (char*)malloc(pl + 1);
         if (!params) { free(buf); return NULL; }
-        memcpy(params, buf + 3, pl);
+        memcpy(params, fn_open + 1, pl);
         params[pl] = '\0';
         Re0Type *parr[32];
         int pn = 0;
         if (pl > 0) {
-            if (!re0_split_parse(params, parr, &pn, 32)) { free(params); free(buf); return NULL; }
+            if (!re0_split_parse(params, parr, &pn, 32, depth)) { free(params); free(buf); return NULL; }
         }
         free(params);
         const char *rp = close + 1;
@@ -472,9 +517,16 @@ Re0Type *re0_type_parse(const char *s) {
         if (*rp == '-' && rp[1] == '>') {
             rp += 2;
             while (*rp == ' ') rp++;
-            ret = re0_type_parse(rp);
-            if (!ret) { free(buf); return NULL; }
+            ret = type_parse_depth(rp, depth + 1);
+            if (!ret) {
+                for (int i = 0; i < pn; i++) re0_type_free_tree(parr[i]);
+                free(buf); return NULL;
+            }
         } else {
+            if (*rp != '\0') {
+                for (int i = 0; i < pn; i++) re0_type_free_tree(parr[i]);
+                free(buf); return NULL;
+            }
             ret = re0_type_make(RE0_TYPE_UNIT, NULL);
         }
         Re0Type *r = re0_type_make_func(parr, pn, ret, false, NULL);
@@ -493,8 +545,10 @@ Re0Type *re0_type_parse(const char *s) {
         if (*ip == '\0') { free(inner); free(buf); return re0_type_make(RE0_TYPE_UNIT, NULL); }
         Re0Type *parr[32];
         int pn = 0;
-        if (!re0_split_parse(inner, parr, &pn, 32)) { free(inner); free(buf); return NULL; }
-        if (pn == 1 && inner[il - 1] != ',' && inner[il - 1] != ' ' && inner[il - 1] != '\t') {
+        if (!re0_split_parse(inner, parr, &pn, 32, depth)) { free(inner); free(buf); return NULL; }
+        size_t trimmed = il;
+        while (trimmed && (inner[trimmed - 1] == ' ' || inner[trimmed - 1] == '\t')) trimmed--;
+        if (pn == 1 && trimmed && inner[trimmed - 1] != ',') {
             Re0Type *r = parr[0];
             free(inner);
             free(buf);
@@ -516,7 +570,18 @@ Re0Type *re0_type_parse(const char *s) {
         while (*is == ' ' || *is == '\t') is++;
         if (*is == '\0') { free(inner); free(buf); return NULL; }
         char *semi = NULL;
-        for (char *q = is; *q; q++) if (*q == ';') semi = q;
+        unsigned nesting = 0;
+        for (char *q = is; *q; q++) {
+            if (*q == '[' || *q == '(' || *q == '<') nesting++;
+            else if (*q == ']' || *q == ')' || (*q == '>' && (q == is || q[-1] != '-'))) {
+                if (!nesting) { free(inner); free(buf); return NULL; }
+                nesting--;
+            } else if (*q == ';' && !nesting) {
+                if (semi) { free(inner); free(buf); return NULL; }
+                semi = q;
+            }
+        }
+        if (nesting) { free(inner); free(buf); return NULL; }
         if (semi) {
             char *elem_end = semi;
             while (elem_end > is && (elem_end[-1] == ' ' || elem_end[-1] == '\t')) elem_end--;
@@ -526,23 +591,25 @@ Re0Type *re0_type_parse(const char *s) {
             if (!elem) { free(inner); free(buf); return NULL; }
             memcpy(elem, is, el);
             elem[el] = '\0';
-            Re0Type *et = re0_type_parse(elem);
+            Re0Type *et = type_parse_depth(elem, depth + 1);
             free(elem);
             if (!et) { free(inner); free(buf); return NULL; }
             char *sz = semi + 1;
             while (*sz == ' ' || *sz == '\t') sz++;
             if (*sz == '\0') { free(inner); free(buf); return re0_type_make_slice(et, NULL); }
             char *end;
+            if (*sz < '0' || *sz > '9') { re0_type_free_tree(et); free(inner); free(buf); return NULL; }
+            errno = 0;
             unsigned long long n = strtoull(sz, &end, 10);
-            (void)n;
+            if (errno == ERANGE || n > SIZE_MAX) { re0_type_free_tree(et); free(inner); free(buf); return NULL; }
             while (*end == ' ' || *end == '\t') end++;
-            if (*end != '\0') { free(inner); free(buf); return NULL; }
+            if (*end != '\0') { re0_type_free_tree(et); free(inner); free(buf); return NULL; }
             Re0Type *r = re0_type_make_array(et, (size_t)n, NULL);
             free(inner);
             free(buf);
             return r;
         }
-        Re0Type *et = re0_type_parse(is);
+        Re0Type *et = type_parse_depth(is, depth + 1);
         if (!et) { free(inner); free(buf); return NULL; }
         Re0Type *r = re0_type_make_slice(et, NULL);
         free(inner);
@@ -571,7 +638,7 @@ Re0Type *re0_type_parse(const char *s) {
             Re0Type *arr[32];
             int an = 0;
             if (al > 0) {
-                if (!re0_split_parse(args, arr, &an, 32)) { free(args); free(name); free(buf); return NULL; }
+                if (!re0_split_parse(args, arr, &an, 32, depth)) { free(args); free(name); free(buf); return NULL; }
             }
             free(args);
             if (strcmp(name, "Vec") == 0 && an == 1) {
@@ -599,6 +666,11 @@ Re0Type *re0_type_parse(const char *s) {
         free(buf);
         return r;
     }
+}
+
+Re0Type *re0_type_parse(const char *s) {
+    if (!s || strnlen(s, RE0_MAX_TYPE_TEXT + 1) > RE0_MAX_TYPE_TEXT) return NULL;
+    return type_parse_depth(s, 0);
 }
 
 /* ── free one heap-owned (owned==true) type node ──
@@ -643,6 +715,7 @@ void re0_type_free_tree(Re0Type *t) {
         case RE0_TYPE_SLICE: re0_type_free_tree(t->slice.inner); break;
         case RE0_TYPE_VEC: re0_type_free_tree(t->vec.inner); break;
         case RE0_TYPE_REFERENCE: re0_type_free_tree(t->ref_.inner); break;
+        case RE0_TYPE_PTR: re0_type_free_tree(t->ptr_.inner); break;
         case RE0_TYPE_TUPLE:
             for (int i = 0; i < t->tuple.count; i++) re0_type_free_tree(t->tuple.elems[i]);
             break;

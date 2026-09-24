@@ -26,17 +26,27 @@ static bool c_gen_array_conversion(Re0Codegen *c, Re0Expr *e) {
     if (target->kind != RE0_TYPE_ARRAY || !target->array.inner || !source->array.inner ||
         target->array.inner->kind >= RE0_TYPE_STR || source->array.inner->kind >= RE0_TYPE_STR) return false;
     Re0TypeKind sk = source->array.inner->kind;
-    const char *kind = re0_type_is_float(sk) ? "__REO_VALUE_FLOAT" : sk == RE0_TYPE_BOOL ? "__REO_VALUE_BOOL" :
-        sk == RE0_TYPE_CHAR ? "__REO_VALUE_CHAR" : re0_type_is_signed(sk) ? "__REO_VALUE_SIGNED" : "__REO_VALUE_UNSIGNED";
+    const char *box = re0_type_is_float(sk) ? "float" : sk == RE0_TYPE_BOOL ? "bool" :
+        sk == RE0_TYPE_CHAR ? "char" : re0_type_is_signed(sk) ? "signed" : "unsigned";
+    Re0TypeKind tk=target->array.inner->kind;
+    const char *kind=re0_type_is_float(tk)?"__REO_VALUE_FLOAT":tk==RE0_TYPE_BOOL?"__REO_VALUE_BOOL":
+        tk==RE0_TYPE_CHAR?"__REO_VALUE_CHAR":re0_type_is_signed(tk)?"__REO_VALUE_SIGNED":"__REO_VALUE_UNSIGNED";
+    const char *field=re0_type_is_float(tk)?"floating":re0_type_is_signed(tk)?"signed_":"unsigned_";
     int temporary = c->temp_counter++;
     char source_type[128];
     if (!infer_expr_c_type(e->cast.inner, source_type, sizeof(source_type))) return false;
     re0_buffer_write_fmt(&c->output, "({ %s __source%d = (", source_type, temporary);
     c_gen_expr(c, e->cast.inner);
-    re0_buffer_write_fmt(&c->output, "); __reo_try_array_%s(__source%d.data, __source%d.len, %s, ",
-                         re0_type_kind_name(target->array.inner->kind), temporary, temporary, kind);
-    write_bits(&c->output, sk);
-    re0_buffer_write_fmt(&c->output, ", %zuLL); })", target->array.size);
+    const char *result_type=c_storage_type(result), *target_type=c_storage_type(target);
+    re0_buffer_write_fmt(&c->output,"); %s __converted%d={0}; __converted%d.index=-1; ",result_type,temporary,temporary);
+    if(source->array.size!=target->array.size)
+        re0_buffer_write_fmt(&c->output,"__converted%d.tag=1; __converted%d.error=__REO_CONV_LENGTH; ",temporary,temporary);
+    else {
+        re0_buffer_write_fmt(&c->output,"for(size_t __ci%d=0; __ci%d<%zu; __ci%d++) { __reo_value __cv%d=__reo_checked_value(__reo_box_%s(__source%d.data[__ci%d]), %s, ",temporary,temporary,target->array.size,temporary,temporary,box,temporary,temporary,kind);
+        write_bits(&c->output,tk);
+        re0_buffer_write_fmt(&c->output,"); if(__cv%d.error) { __converted%d.tag=1; __converted%d.error=__cv%d.error; __converted%d.index=(int64_t)__ci%d; __converted%d.value=(%s){0}; break; } __converted%d.value.data[__ci%d]=(%s)__cv%d.data.%s; } ",temporary,temporary,temporary,temporary,temporary,temporary,temporary,target_type,temporary,temporary,c_storage_type(target->array.inner),temporary,field);
+    }
+    re0_buffer_write_fmt(&c->output,"(void)__source%d; __converted%d; })",temporary,temporary);
     return true;
 }
 

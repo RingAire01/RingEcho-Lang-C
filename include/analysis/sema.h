@@ -34,6 +34,7 @@ typedef struct {
     bool               supports_conversions; /* Target capability, checked before lowering. */
     bool               had_error;
     int                infer_depth;
+    int                statement_depth;
     Re0Type           *current_fn_return;   /* current function return type (for B3 validation) */
     int                loop_depth;          /* current loop nesting depth (for break/continue validation) */
     int                fn_depth;            /* current function nesting depth (for return validation) */

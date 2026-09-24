@@ -2,6 +2,7 @@
 #include "analysis/model.h"
 #include "base/arena.h"
 #include "base/types.h"
+#include "base/re0_limits.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -47,11 +48,37 @@ void re0_model_register_enum(Re0SemanticModel *m, const char *name,
     def.variant_names = (char**)xcalloc((size_t)n, sizeof(char*));
     def.variant_has_payload = (int*)xcalloc((size_t)n, sizeof(int));
     def.variant_count = n;
+    def.variant_types = (char***)xcalloc((size_t)n, sizeof(char**));
+    def.variant_type_counts = (int*)xcalloc((size_t)n, sizeof(int));
     for (int i = 0; i < n; i++) {
         def.variant_names[i] = strdup(variant_names[i]);
         def.variant_has_payload[i] = has_payload ? has_payload[i] : 0;
+        def.variant_type_counts[i] = def.variant_has_payload[i] ? 1 : 0;
     }
     Re0EnumDefVec_push(&m->enum_defs, def);
+}
+
+bool re0_model_set_enum_payload(Re0EnumDef *def, int variant, char **types, int count) {
+    if (!def || !def->variant_types || !def->variant_type_counts ||
+        variant < 0 || variant >= def->variant_count || count < 0 || count > RE0_MAX_TYPE_FIELDS ||
+        (count && !types)) return false;
+    char **copy = count ? calloc((size_t)count, sizeof(*copy)) : NULL;
+    if (count && !copy) return false;
+    for (int i = 0; i < count; i++) {
+        copy[i] = types[i] ? strdup(types[i]) : NULL;
+        if (!copy[i]) {
+            for (int j = 0; j < i; j++) free(copy[j]);
+            free(copy); return false;
+        }
+    }
+    if (def->variant_types[variant]) {
+        for (int i = 0; i < def->variant_type_counts[variant]; i++) free(def->variant_types[variant][i]);
+        free(def->variant_types[variant]);
+    }
+    def->variant_types[variant] = copy;
+    def->variant_type_counts[variant] = count;
+    def->variant_has_payload[variant] = count != 0;
+    return true;
 }
 
 Re0StructDef *re0_model_find_struct(Re0SemanticModel *m, const char *name) {
@@ -275,6 +302,15 @@ void re0_model_free(Re0SemanticModel *m) {
             free(m->enum_defs.data[i].variant_names[j]);
         free(m->enum_defs.data[i].variant_names);
         free(m->enum_defs.data[i].variant_has_payload);
+        for (int j = 0; j < m->enum_defs.data[i].variant_count; j++) {
+            if (m->enum_defs.data[i].variant_types[j]) {
+                for (int k = 0; k < m->enum_defs.data[i].variant_type_counts[j]; k++)
+                    free(m->enum_defs.data[i].variant_types[j][k]);
+                free(m->enum_defs.data[i].variant_types[j]);
+            }
+        }
+        free(m->enum_defs.data[i].variant_types);
+        free(m->enum_defs.data[i].variant_type_counts);
     }
     Re0EnumDefVec_free(&m->enum_defs);
 

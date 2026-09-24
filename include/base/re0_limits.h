@@ -22,6 +22,9 @@
 #define RE0_MAX_PARSE_DEPTH       512
 #define RE0_MAX_SEMA_DEPTH        256
 #define RE0_MAX_JSON_DEPTH        256
+#define RE0_MAX_TYPE_DEPTH        128
+#define RE0_MAX_TYPE_TEXT       65536
+#define RE0_MAX_TYPE_FIELDS      1024
 
 /* ── file/message size limits ── */
 #define RE0_MAX_SOURCE_BYTES    (16 * 1024 * 1024)

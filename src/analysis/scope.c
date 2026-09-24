@@ -21,6 +21,7 @@ void re0_scope_define(Re0Scope *s, const char *name, Re0Type *type, bool is_mut)
     sym.type = type;
     sym.is_mutable = is_mut;
     sym.is_function = false;
+    sym.borrows_local = false;
     Re0SymbolVec_push(&s->symbols, sym);
 }
 

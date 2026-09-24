@@ -35,6 +35,8 @@ typedef struct {
      * plus the wasi-sdk clang. The build writes the C source and invokes
      * clang --target=wasm32-wasi instead of gcc. */
     bool                wasm;
+    /* Native backend: emit an ELF64 relocatable object instead of linking. */
+    bool                emit_object;
     Re0EventBus         bus;
 } Re0Compiler;
 

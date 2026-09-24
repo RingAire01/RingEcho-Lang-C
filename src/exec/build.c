@@ -137,10 +137,13 @@ bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path)
     const char *cc_opt = getenv("REO_CC_OPT");
     if (!cc_opt || !*cc_opt) cc_opt = "-O1";
     const char *arguments[] = {b->cc_path, cc_opt, "-pthread", b->tmp_file,
-                              "-o", output_path, NULL, NULL, NULL};
+                              "-o", output_path, "-Werror=int-conversion",
+                              "-Werror=incompatible-pointer-types", "-Werror=cast-function-type",
+                              "-Werror=return-type", "-Werror=implicit-function-declaration",
+                              NULL, NULL, NULL};
     if (b->shared) {
-        arguments[6] = "-shared";
-        arguments[7] = "-fPIC";
+        arguments[11] = "-shared";
+        arguments[12] = "-fPIC";
     }
     int rc = re0_process_run(b->cc_path, arguments);
     if (rc != 0) {

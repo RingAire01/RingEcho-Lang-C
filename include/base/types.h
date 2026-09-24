@@ -28,6 +28,7 @@ typedef struct Re0Type {
         struct { struct Re0Type **elems; int count; } tuple;
         struct { char *name; } named;
         struct { struct Re0Type *inner; bool mutable_; } ref_;
+        struct { struct Re0Type *inner; bool mutable_; } ptr_;
         struct {
             struct Re0Type *ret;
             struct Re0Type **params;
