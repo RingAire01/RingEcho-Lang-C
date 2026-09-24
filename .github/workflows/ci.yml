@@ -115,6 +115,16 @@ jobs:
         run: |
           make CONFIG=Release test
           make CONFIG=Release PYTHON=python test-conversion
+          make CONFIG=Release PYTHON=python test-match
+      - name: 实验性 x86-64 原生后端回归
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: |
+          ulimit -c 0
+          make CONFIG=Release PYTHON=python test-native
+          make CONFIG=Release test-native-unit
+          make CONFIG=Release test-layout test-layout-faults
+          make CONFIG=Release test-c-storage-faults
+          REO_TEST_SANITIZE_GENERATED=1 REO_TEST_COMPILER="$PWD/target/Release/rev" python -m unittest discover -s tests/native -p 'test_c_storage.py'
       - name: 记录 32 位运行时限制
         if: matrix.arch == 'x86'
         run: |

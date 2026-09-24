@@ -18,6 +18,12 @@ English | [简体中文](README.zh.md) | [繁體中文](README.zht.md)
 
 ## Toolchain
 
+An experimental `--backend native` emits x86-64 machine code and ELF64 objects
+directly, using the system linker for Linux executables without invoking a C
+compiler. It currently supports 8–64-bit integers, floats, booleans and byte characters; see
+[NATIVE.md](NATIVE.md) for commands, supported features and limitations.
+The full type/layout migration is tracked in [TYPE_SYSTEM.md](TYPE_SYSTEM.md).
+
 | Binary | Role | Description |
 |--------|------|-------------|
 | `rev` | Compiler / evaluator | Compile, run, type-check, LSP server, project init, venv |
@@ -87,7 +93,7 @@ rvm remote             # List available versions
 - Generic functions + structs with lazy monomorphization
 - Option/Result + `?` operator
 - Lambda/closures (no capture yet)
-- Match expressions (value + enum tag)
+- Match expressions (integer, float, bool, char, string content + enum tag; typed scalar results)
 - Pipeline operator `|>`
 - Component keyword
 - for-in range + string iteration
@@ -101,6 +107,15 @@ rvm remote             # List available versions
 - Project configuration via `ringecho.toml`
 
 ## Testing
+
+`match` evaluates its subject once and executes only the first matching arm.
+Patterns must be assignable to the subject type; arm results must be assignable
+to the first arm's type. A wildcard `_` must be last. Exhaustiveness is not yet
+checked: unmatched numeric results default to zero and string results to the
+empty string. Prefer an explicit wildcard arm.
+
+Run output-asserting match regressions with `make CONFIG=Release test-match`
+(requires Python 3).
 
 ```bash
 make CONFIG=Debug test          # End-to-end: compile + run all positive tests,

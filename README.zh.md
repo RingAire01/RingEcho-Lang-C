@@ -18,6 +18,11 @@ RingEcho 编译器工具链的零依赖 C 实现。
 
 ## 工具链
 
+新增实验性原生后端：`--backend native` 直接生成 x86-64 机器码和 ELF64
+目标文件，通过系统链接器生成 Linux 可执行程序，不调用 C 编译器。
+当前支持 8–64 位整数、浮点、布尔与字符子集，使用方式与边界见 [NATIVE.md](NATIVE.md)。
+完整类型系统与系统级布局迁移状态见 [TYPE_SYSTEM.md](TYPE_SYSTEM.md)。
+
 | 二进制 | 角色 | 说明 |
 |--------|------|------|
 | `rev` | 编译器 / 求值器 | 编译、运行、类型检查、LSP 服务器、项目初始化、虚拟环境 |
@@ -87,7 +92,7 @@ rvm remote             # 列出可用版本
 - 泛型函数 + 结构体，惰性单态化
 - Option/Result + `?` 运算符
 - Lambda / 闭包（暂不支持捕获）
-- Match 表达式（值匹配 + 枚举标签）
+- Match 表达式（整数、浮点、布尔、字符、字符串内容匹配 + 枚举标签；保留标量结果类型）
 - 管道运算符 `|>`
 - Component 关键字
 - for-in 区间 + 字符串迭代
@@ -101,6 +106,22 @@ rvm remote             # 列出可用版本
 - 通过 `ringecho.toml` 进行项目配置
 
 ## 测试
+
+`match` 的输入只求值一次，按顺序选择首个匹配分支，仅执行该分支。
+模式必须能赋值给输入类型，各分支结果必须能赋值给首个分支的类型；
+通配符 `_` 必须放在最后。建议始终提供 `_`：目前尚未做穷尽性检查，
+无分支命中时数值结果为零，字符串结果为空字符串。
+
+```reo
+fn describe(value: str) -> str {
+    return match value {
+        "hello" => "greeting",
+        _ => "other",
+    };
+}
+```
+
+运行带输出断言的 match 回归测试：`make CONFIG=Release test-match`（需要 Python 3）。
 
 ```bash
 make CONFIG=Debug test          # 端到端：编译并运行全部正向测试，
