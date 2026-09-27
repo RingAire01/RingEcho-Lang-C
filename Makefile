@@ -42,6 +42,12 @@ CPPFLAGS := -Iinclude
 CFLAGS_COMMON := -Wall -Wextra -Wpedantic -Wno-overlength-strings -std=c11 -pipe -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?= -pthread
 
+# macOS hides mkdtemp and O_NOFOLLOW behind the Darwin feature macro when
+# _POSIX_C_SOURCE is defined, so expose the full Darwin namespace there.
+ifeq ($(PLATFORM),macOS)
+    CFLAGS_COMMON += -D_DARWIN_C_SOURCE
+endif
+
 # On Windows, use -lpthread equivalent is built into libwinpthread.
 ifeq ($(PLATFORM),Windows)
     MKDIR_P := mkdir -p

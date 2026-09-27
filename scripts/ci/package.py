@@ -134,6 +134,10 @@ def deb_package(payload, output, arch, version, scratch):
                             cwd=scratch, check=True, capture_output=True, text=True)
     dependencies = next(line.split("=", 1)[1] for line in result.stdout.splitlines()
                         if line.startswith("shlibs:Depends="))
+    # A 32-bit package built on an amd64 host resolves libc to the amd64-only
+    # libc6-i386 shim, which becomes the uninstallable "libc6-i386:i386". The
+    # i386 package must depend on libc6 so apt selects the real 32-bit libc.
+    dependencies = re.sub(r"\blibc6-i386\b", "libc6", dependencies).strip()
     deb_arch = {"x64": "amd64", "x86": "i386", "arm64": "arm64"}[arch]
     installed_size = (sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) + 1023) // 1024
     (control / "control").write_text(

@@ -36,9 +36,12 @@ class ProcessTests(unittest.TestCase):
             compiler.chmod(0o700)
             output = root / 'output $(touch injected) "quoted".wasm'
             log = root / "arguments.json"
+            # This test inspects the retained private temp file, so it must opt
+            # into keeping generated C even when the caller exports REO_KEEP_C=0.
             result = subprocess.run([str(COMPILER), "build", str(source), "--target", "wasm", "-o", str(output)],
                                     cwd=root, text=True, capture_output=True, timeout=20,
-                                    env={**os.environ, "REO_WASI_CC": str(compiler), "REO_ARGUMENT_LOG": str(log)})
+                                    env={**os.environ, "REO_KEEP_C": "1",
+                                         "REO_WASI_CC": str(compiler), "REO_ARGUMENT_LOG": str(log)})
             self.assertEqual(result.returncode, 0, result.stderr)
             arguments = json.loads(log.read_text())
             self.assertEqual(arguments[-2:], ["-o", str(output)])
