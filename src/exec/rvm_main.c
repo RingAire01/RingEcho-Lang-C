@@ -40,7 +40,7 @@
 #define RVM_VERSIONS_DIR ".rvm/versions"
 #define RVM_CURRENT ".rvm/current"
 #define RVM_CURRENT_VERSION ".rvm/current.version"
-#define RVM_DEFAULT_VERSION "0.2.1"
+#define RVM_DEFAULT_VERSION "0.2.2"
 
 static void print_usage(void) {
     printf("RingEcho Version Manager (rvm) v0.1.0\n");
@@ -436,7 +436,7 @@ static int cmd_uninstall(const char *version) {
 static int cmd_remote(void) {
     printf("Available versions:\n");
     printf("  0.1.0  (initial release)\n");
-    printf("  0.2.1  (current stable)\n");
+    printf("  0.2.2  (current stable)\n");
     printf("\nCheck: https://github.com/RingAire01/RingEcho-Lang-C/releases\n");
     return 0;
 }
