@@ -131,20 +131,61 @@ bool re0_build_write_source(Re0Build *b, const char *c_code) {
     return true;
 }
 
+bool re0_build_add_include(Re0Build *b, const char *header) {
+    if (!b || !header || b->include_count >= RE0_BUILD_MAX_FLAGS) return false;
+    b->includes[b->include_count++] = header;
+    return true;
+}
+
+bool re0_build_add_lib_dir(Re0Build *b, const char *dir) {
+    if (!b || !dir || b->lib_dir_count >= RE0_BUILD_MAX_FLAGS) return false;
+    b->lib_dirs[b->lib_dir_count++] = dir;
+    return true;
+}
+
+bool re0_build_add_link(Re0Build *b, const char *lib) {
+    if (!b || !lib || b->lib_count >= RE0_BUILD_MAX_FLAGS) return false;
+    b->libs[b->lib_count++] = lib;
+    return true;
+}
+
 bool re0_build_compile(Re0Build *b, const char *c_code, const char *output_path) {
     if (!b || !c_code || !output_path || !*output_path) return false;
     if (!re0_build_write_source(b, c_code)) return false;
     const char *cc_opt = getenv("REO_CC_OPT");
     if (!cc_opt || !*cc_opt) cc_opt = "-O1";
-    const char *arguments[] = {b->cc_path, cc_opt, "-pthread", b->tmp_file,
-                              "-o", output_path, "-Werror=int-conversion",
-                              "-Werror=incompatible-pointer-types", "-Werror=cast-function-type",
-                              "-Werror=return-type", "-Werror=implicit-function-declaration",
-                              NULL, NULL, NULL};
-    if (b->shared) {
-        arguments[11] = "-shared";
-        arguments[12] = "-fPIC";
+    /* Base arguments (11) + 2 per stored flag (3 kinds x 16 = 96) + shared (2)
+     * + terminator, so 128 is a safe bound given RE0_BUILD_MAX_FLAGS. */
+    const char *arguments[128];
+    int n = 0;
+    arguments[n++] = b->cc_path;
+    arguments[n++] = cc_opt;
+    arguments[n++] = "-pthread";
+    arguments[n++] = b->tmp_file;
+    arguments[n++] = "-o";
+    arguments[n++] = output_path;
+    arguments[n++] = "-Werror=int-conversion";
+    arguments[n++] = "-Werror=incompatible-pointer-types";
+    arguments[n++] = "-Werror=cast-function-type";
+    arguments[n++] = "-Werror=return-type";
+    arguments[n++] = "-Werror=implicit-function-declaration";
+    for (int i = 0; i < b->include_count; i++) {
+        arguments[n++] = "-include";
+        arguments[n++] = b->includes[i];
     }
+    for (int i = 0; i < b->lib_dir_count; i++) {
+        arguments[n++] = "-L";
+        arguments[n++] = b->lib_dirs[i];
+    }
+    for (int i = 0; i < b->lib_count; i++) {
+        arguments[n++] = "-l";
+        arguments[n++] = b->libs[i];
+    }
+    if (b->shared) {
+        arguments[n++] = "-shared";
+        arguments[n++] = "-fPIC";
+    }
+    arguments[n] = NULL;
     int rc = re0_process_run(b->cc_path, arguments);
     if (rc != 0) {
         re0_error_append(b->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,

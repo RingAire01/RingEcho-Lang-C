@@ -26,6 +26,7 @@ static void print_usage(void) {
     printf("  rev build [file.reo] --target wasm    Compile to WebAssembly (WASI)\n");
     printf("  rev build <file.reo> --backend native [--emit obj|exe] [-o out]\n");
     printf("    Experimental target: x86_64-unknown-linux-gnu (Linux host)\n");
+    printf("  C flags: --include <h> --lib-dir <d> --link <l>  Host library integration\n");
     printf("  rev check <file.reo>                 Type check only\n");
     printf("  rev lsp                              Start LSP server\n");
     printf("  rev venv <init|activate>             Manage virtual environment\n");
@@ -279,11 +280,16 @@ int main(int argc, char **argv) {
 
     const char *target_name = NULL, *backend_name = NULL, *emit_name = NULL;
     bool explicit_output = false;
+    const char *includes[RE0_BUILD_MAX_FLAGS]; int include_count = 0;
+    const char *lib_dirs[RE0_BUILD_MAX_FLAGS]; int lib_dir_count = 0;
+    const char *links[RE0_BUILD_MAX_FLAGS]; int link_count = 0;
     for (int i = 3; i < argc; i++) {
         const char *option = argv[i];
         if (strcmp(option, "--shared") == 0) { shared = true; continue; }
         if (strcmp(option, "--target") != 0 && strcmp(option, "--backend") != 0 &&
-            strcmp(option, "--emit") != 0 && strcmp(option, "-o") != 0) {
+            strcmp(option, "--emit") != 0 && strcmp(option, "-o") != 0 &&
+            strcmp(option, "--include") != 0 && strcmp(option, "--lib-dir") != 0 &&
+            strcmp(option, "--link") != 0) {
             fprintf(stderr, "unknown option: %s\n", option); return 1;
         }
         if (i + 1 == argc || !*argv[i + 1] || argv[i + 1][0] == '-') {
@@ -293,7 +299,16 @@ int main(int argc, char **argv) {
         if (strcmp(option, "--target") == 0) target_name = value;
         else if (strcmp(option, "--backend") == 0) backend_name = value;
         else if (strcmp(option, "--emit") == 0) emit_name = value;
-        else { output = value; explicit_output = true; }
+        else if (strcmp(option, "--include") == 0) {
+            if (include_count >= RE0_BUILD_MAX_FLAGS) { fprintf(stderr, "too many --include\n"); return 1; }
+            includes[include_count++] = value;
+        } else if (strcmp(option, "--lib-dir") == 0) {
+            if (lib_dir_count >= RE0_BUILD_MAX_FLAGS) { fprintf(stderr, "too many --lib-dir\n"); return 1; }
+            lib_dirs[lib_dir_count++] = value;
+        } else if (strcmp(option, "--link") == 0) {
+            if (link_count >= RE0_BUILD_MAX_FLAGS) { fprintf(stderr, "too many --link\n"); return 1; }
+            links[link_count++] = value;
+        } else { output = value; explicit_output = true; }
     }
     if (backend_name) {
         if (strcmp(backend_name, "native") == 0) backend = &re0_backend_native;
@@ -333,6 +348,9 @@ int main(int argc, char **argv) {
     comp.shared = shared;
     comp.wasm = wasm;
     comp.emit_object = emit_object;
+    for (int i = 0; i < include_count; i++) (void)re0_build_add_include(&comp.build, includes[i]);
+    for (int i = 0; i < lib_dir_count; i++) (void)re0_build_add_lib_dir(&comp.build, lib_dirs[i]);
+    for (int i = 0; i < link_count; i++) (void)re0_build_add_link(&comp.build, links[i]);
 
     bool ok = false;
     if (strcmp(cmd, "run") == 0) ok = re0_compiler_run(&comp, path);

@@ -17,15 +17,25 @@
 
 ## P0 — 工具链（阻塞宿主集成）
 
-| # | 缺口 | 实测证据 | 需求 |
-|---|------|----------|------|
-| T1 | 没有 C `#include` 通道 | `@` 属性仅识别 `@gc` / `@repr(C)`（`src/backend/codegen.c`） | 引入系统头（如 `<WebView2.h>`） |
-| T2 | 没有链接参数通道 | `rev run/build` 仅接受 `--shared/--target/--backend/--emit/-o`；`re0_build_compile` 的 gcc 参数写死 | 链接 C shim 与系统库（`-l`/`-L`） |
-| T3 | 不支持整数到函数指针转换 | `invalid cast from 'u64' to 'fn'` | `LoadLibrary`+`GetProcAddress` 式动态派发 |
+| # | 缺口 | 状态 | 说明 |
+|---|------|------|------|
+| T1 | C `#include` 通道 | ✅ 已实现 | `--include <h>` → gcc `-include` |
+| T2 | 链接参数通道 | ✅ 已实现 | `--lib-dir <d>` / `--link <l>` → gcc `-L` / `-l` |
+| T3 | 整数到函数指针转换 | ⬜ 未实现 | `invalid cast from 'u64' to 'fn'`；`LoadLibrary`+`GetProcAddress` 式动态派发 |
 
-建议最小方案：为 `rev run/build` 增加可重复的 `--include <h>`、`--lib-dir <d>`、
-`--link <l>`，分别透传为 gcc 的 `-include`、`-L`、`-l`。T1+T2 即可解开 M1；
-T3 是更通用但非必需的替代。
+`rev run/build` 现支持可重复的 `--include`、`--lib-dir`、`--link`（各上限
+`RE0_BUILD_MAX_FLAGS` = 16），分别透传为 gcc 的 `-include`、`-L`、`-l`。
+实现位于 `include/exec/build.h`、`src/exec/build.c`、`src/exec/rev_main.c`。
+
+已在 Windows 11 + LLVM-MinGW 22.1.8 验证：链接自建静态库后
+
+```bash
+rev build app.reo --include test.h --lib-dir . --link reverietest -o out.exe
+```
+
+生成的程序正确调用 C 函数（`reverie_test_add(20, 22)` → `42`）。整仓 `.reo`
+回归 78/78 通过，无回归。T1+T2 已解锁宿主集成（如 Reverie M1）；T3 是更通用
+但非必需的替代。
 
 ## P1 — 语言
 
