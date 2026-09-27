@@ -39,7 +39,7 @@
 #define RVM_DIR ".rvm"
 #define RVM_VERSIONS_DIR ".rvm/versions"
 #define RVM_CURRENT ".rvm/current"
-#define RVM_DEFAULT_VERSION "0.2.0"
+#define RVM_DEFAULT_VERSION "0.2.1"
 
 static void print_usage(void) {
     printf("RingEcho Version Manager (rvm) v0.1.0\n");
@@ -169,11 +169,11 @@ static int cmd_install(const char *version) {
     char url[1024];
 #if defined(RE0_PLATFORM_WINDOWS)
     snprintf(url, sizeof(url),
-             "https://github.com/Ringaire/RingEcho-Lang-C/releases/download/v%s/rev-windows-x86_64.exe",
+             "https://github.com/RingAire01/RingEcho-Lang-C/releases/download/v%s/rev-windows-x86_64.exe",
              version);
 #else
     snprintf(url, sizeof(url),
-             "https://github.com/Ringaire/RingEcho-Lang-C/releases/download/v%s/rev-linux-x86_64",
+             "https://github.com/RingAire01/RingEcho-Lang-C/releases/download/v%s/rev-linux-x86_64",
              version);
 #endif
 
@@ -195,7 +195,7 @@ static int cmd_install(const char *version) {
     }
     if (rc != 0) {
         printf("Failed to download version %s\n", version);
-        printf("Check: https://github.com/Ringaire/RingEcho-Lang-C/releases\n");
+        printf("Check: https://github.com/RingAire01/RingEcho-Lang-C/releases\n");
         return 1;
     }
 
@@ -386,8 +386,8 @@ static int cmd_uninstall(const char *version) {
 static int cmd_remote(void) {
     printf("Available versions:\n");
     printf("  0.1.0  (initial release)\n");
-    printf("  0.2.0  (current stable)\n");
-    printf("\nCheck: https://github.com/Ringaire/RingEcho-Lang-C/releases\n");
+    printf("  0.2.1  (current stable)\n");
+    printf("\nCheck: https://github.com/RingAire01/RingEcho-Lang-C/releases\n");
     return 0;
 }
 

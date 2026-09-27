@@ -10,7 +10,7 @@ English | [简体中文](README.zh.md) | [繁體中文](README.zht.md)
 
 | Item | Value |
 |------|-------|
-| Version | 0.2.0 |
+| Version | 0.2.1 |
 | Tests | Passing (make test) |
 | Toolchain | 3 binaries: `rev` / `rem` / `rvm` |
 | Backends | C source, freestanding C, reo ISA, shared library, WebAssembly (WASI) |

@@ -10,7 +10,7 @@ RingEcho 編譯器工具鏈的零依賴 C 實作。
 
 | 項目 | 值 |
 |------|-----|
-| 版本 | 0.2.0 |
+| 版本 | 0.2.1 |
 | 測試 | 通過（make test） |
 | 工具鏈 | 3 個二進位檔：`rev` / `rem` / `rvm` |
 | 後端 | C 原始碼、freestanding C、reo ISA、共享函式庫、WebAssembly (WASI) |

@@ -83,7 +83,7 @@ bool reo_venv_create(const char *project_dir) {
     FILE *f = fopen(config_path, "w");
     if (!f) return false;
     fprintf(f, "[env]\n");
-    fprintf(f, "ringecho_version = \"0.2.0\"\n");
+    fprintf(f, "ringecho_version = \"0.2.1\"\n");
     fprintf(f, "created = \"%s\"\n", "auto");
     fclose(f);
 
