@@ -14,7 +14,7 @@ RingEcho 编译器工具链的零依赖 C 实现。
 | 测试 | 通过（make test） |
 | 工具链 | 3 个二进制：`rev` / `rem` / `rvm` |
 | 后端 | C 源码、freestanding C、reo ISA、共享库、WebAssembly (WASI) |
-| 许可证 | MIT |
+| 许可证 | Apache-2.0 |
 
 ## 工具链
 
@@ -133,4 +133,4 @@ make test-list                       # 列出全部测试
 
 ## 许可证
 
-[MIT](LICENSE) - Copyright (c) 2025-2026 辉夜铃 (KaguyaRing) & Ringaire
+[Apache-2.0](LICENSE) - Copyright (c) 2025-2026 辉夜铃 (KaguyaRing) & Ringaire

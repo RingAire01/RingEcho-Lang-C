@@ -14,7 +14,7 @@ English | [简体中文](README.zh.md) | [繁體中文](README.zht.md)
 | Tests | Passing (make test) |
 | Toolchain | 3 binaries: `rev` / `rem` / `rvm` |
 | Backends | C source, freestanding C, reo ISA, shared library, WebAssembly (WASI) |
-| License | MIT |
+| License | Apache-2.0 |
 
 ## Toolchain
 
@@ -128,4 +128,4 @@ make test-list                       # List all tests
 
 ## License
 
-[MIT](LICENSE) - Copyright (c) 2025-2026 辉夜铃 (KaguyaRing) & Ringaire
+[Apache-2.0](LICENSE) - Copyright (c) 2025-2026 辉夜铃 (KaguyaRing) & Ringaire
