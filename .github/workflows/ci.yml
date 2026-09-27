@@ -252,5 +252,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "RingEcho $GITHUB_REF_NAME" \
-            --notes "Portable packages and installers for $GITHUB_REF_NAME." \
+            --generate-notes \
             "${files[@]}"
