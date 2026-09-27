@@ -32,7 +32,7 @@ Debian/Ubuntu 使用与系统架构匹配的 `.deb`：
 sudo apt install ./ringecho-<版本>-linux-<架构>.deb
 ```
 
-工具安装到 `/usr/bin`，说明位于 `/usr/share/doc/ringecho`。卸载使用 `sudo apt remove ringecho`。其他发行版可使用 `.tar.gz` 便携包，但需要满足相同的 glibc ABI 依赖；这些不是 musl 静态包。包的 libc 依赖由构建产物自动计算。
+工具安装到 `/usr/local/bin`，说明位于 `/usr/local/share/doc/ringecho`。卸载使用 `sudo apt remove ringecho`。其他发行版可使用 `.tar.gz` 便携包，但需要满足相同的 glibc ABI 依赖；这些不是 musl 静态包。包的 libc 依赖由构建产物自动计算。
 
 生成程序需要 GCC 或 Clang 及 pthread 开发支持。检查安装：
 

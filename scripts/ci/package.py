@@ -122,7 +122,9 @@ def install_tree(payload, root, prefix):
 
 def deb_package(payload, output, arch, version, scratch):
     root = scratch / "deb-root"
-    install_tree(payload, root, "usr")
+    # Install under /usr/local: util-linux already owns /usr/bin/rev, so a
+    # /usr/bin payload makes the package uninstallable on stock Debian/Ubuntu.
+    install_tree(payload, root, "usr/local")
     control = root / "DEBIAN"
     control.mkdir()
     # Let the platform tooling determine the actual ABI dependencies.
@@ -130,7 +132,7 @@ def deb_package(payload, output, arch, version, scratch):
     (scratch / "debian/control").write_text(
         "Source: ringecho\nMaintainer: RingAire <noreply@github.com>\n\n"
         "Package: ringecho\nArchitecture: any\nDescription: RingEcho compiler tools\n", encoding="utf-8")
-    result = subprocess.run(["dpkg-shlibdeps", "-O", *[f"-e{p}" for p in sorted((root / "usr/bin").iterdir())]],
+    result = subprocess.run(["dpkg-shlibdeps", "-O", *[f"-e{p}" for p in sorted((root / "usr/local/bin").iterdir())]],
                             cwd=scratch, check=True, capture_output=True, text=True)
     dependencies = next(line.split("=", 1)[1] for line in result.stdout.splitlines()
                         if line.startswith("shlibs:Depends="))

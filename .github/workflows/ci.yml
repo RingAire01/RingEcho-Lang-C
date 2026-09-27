@@ -141,7 +141,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get install --no-install-recommends -y ./target/packages/*.deb
-          python scripts/ci/smoke.py /usr/bin
+          python scripts/ci/smoke.py /usr/local/bin
           sudo dpkg --remove ringecho
       - name: 验证 macOS 软件包安装
         if: matrix.platform == 'macos'
