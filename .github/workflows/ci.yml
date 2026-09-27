@@ -116,6 +116,7 @@ jobs:
           make CONFIG=Release test
           make CONFIG=Release PYTHON=python test-conversion
           make CONFIG=Release PYTHON=python test-match
+          make CONFIG=Release PYTHON=python test-bigint
       - name: 实验性 x86-64 原生后端回归
         if: matrix.platform == 'linux' && matrix.arch == 'x64'
         run: |

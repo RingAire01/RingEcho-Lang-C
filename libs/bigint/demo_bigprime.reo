@@ -1,0 +1,82 @@
+// External big integers from Reo.
+//
+// The value below is a real 768-bit prime (verified with 40 Miller-Rabin
+// rounds), far past Reo's 128-bit primitive ceiling. It is handled entirely by
+// the external libs/bigint library through the FFI channel:
+//
+//   rev run libs/bigint/demo_bigprime.reo \
+//       --lib-dir libs/bigint/build --link reo_bigint
+//
+// The program self-checks and exits non-zero on any mismatch, so it doubles as
+// the `make test-bigint` regression.
+
+extern {
+    fn exit(code: i32);
+    fn reo_big_from_dec(text: str) -> u64;
+    fn reo_big_from_u64(value: u64) -> u64;
+    fn reo_big_to_dec(handle: u64) -> str;
+    fn reo_big_free(handle: u64);
+    fn reo_big_bit_length(handle: u64) -> i32;
+    fn reo_big_cmp(a: u64, b: u64) -> i32;
+    fn reo_big_sub(a: u64, b: u64) -> u64;
+    fn reo_big_mul(a: u64, b: u64) -> u64;
+    fn reo_big_mod_small(handle: u64, m: u64) -> u64;
+}
+
+fn fail(what: str) {
+    println(what);
+    exit(1);
+}
+
+fn main() {
+    let prime: u64 = reo_big_from_dec(
+        "1050987976654851153728895162503709871956230126588076976005086291253413530204839271691486613055624521354125819073130252118657152505250536717348305109388981100184026655582790799825737062972588984986928929328778705370114978417296688951");
+
+    if reo_big_bit_length(prime) != 768 {
+        fail("bit length FAIL");
+    }
+    println(reo_big_bit_length(prime));
+    println(reo_big_to_dec(prime));
+
+    // Trial-divide by every integer below one million. A prime has no factor.
+    let divisor: u64 = 2;
+    let factor: u64 = 0;
+    while divisor < 1000000 {
+        if reo_big_mod_small(prime, divisor) == 0 {
+            factor = divisor;
+            break;
+        }
+        divisor = divisor + 1;
+    }
+    if factor != 0 {
+        fail("unexpected small factor");
+    }
+    println("no factor below 1000000 (expected: the value is prime)");
+
+    // Subtraction: prime - 1 must equal the known value.
+    let one: u64 = reo_big_from_u64(1);
+    let less: u64 = reo_big_sub(prime, one);
+    let less_expected: u64 = reo_big_from_dec(
+        "1050987976654851153728895162503709871956230126588076976005086291253413530204839271691486613055624521354125819073130252118657152505250536717348305109388981100184026655582790799825737062972588984986928929328778705370114978417296688950");
+    if reo_big_cmp(less, less_expected) != 0 {
+        fail("subtraction FAIL");
+    }
+
+    // Multiplication: prime * 2 must equal the known value.
+    let doubled: u64 = reo_big_mul(prime, reo_big_from_u64(2));
+    let doubled_expected: u64 = reo_big_from_dec(
+        "2101975953309702307457790325007419743912460253176153952010172582506827060409678543382973226111249042708251638146260504237314305010501073434696610218777962200368053311165581599651474125945177969973857858657557410740229956834593377902");
+    if reo_big_cmp(doubled, doubled_expected) != 0 {
+        fail("multiplication FAIL");
+    }
+
+    reo_big_free(doubled_expected);
+    reo_big_free(doubled);
+    reo_big_free(less_expected);
+    reo_big_free(less);
+    reo_big_free(one);
+    reo_big_free(prime);
+
+    println("bigint OK");
+    exit(0);
+}

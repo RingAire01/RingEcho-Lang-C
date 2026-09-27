@@ -41,6 +41,7 @@ endif
 CPPFLAGS := -Iinclude
 CFLAGS_COMMON := -Wall -Wextra -Wpedantic -Wno-overlength-strings -std=c11 -pipe -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?= -pthread
+AR ?= ar
 
 # macOS hides mkdtemp and O_NOFOLLOW behind the Darwin feature macro when
 # _POSIX_C_SOURCE is defined, so expose the full Darwin namespace there.
@@ -123,7 +124,7 @@ RUNTIME_FAILURE_TESTS := tests/divzero.reo tests/invalid_array_oob.reo tests/sta
 POSITIVE_TESTS := $(filter-out $(CHECK_FAILURE_TESTS) $(RUNTIME_FAILURE_TESTS),$(wildcard tests/*.reo tests/stdlib/*.reo))
 
 .DEFAULT_GOAL := rev
-.PHONY: test-conversion all build rev rem rvm release debug alpha test test-one check-one test-list clean clean-temp platform-info
+.PHONY: test-conversion all build rev rem rvm release debug alpha test test-one check-one test-list clean clean-temp platform-info bigint test-bigint
 
 all: release
 
@@ -248,3 +249,15 @@ test-match: $(TARGET_REV)
 
 test-conversion: $(TARGET_REV)
 	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/conversion -p "test_*.py"
+
+# ── External big integers (libs/bigint) ──
+BIGINT_DIR := libs/bigint
+
+bigint:
+	@mkdir -p "$(BIGINT_DIR)/build"
+	$(CC) $(CFLAGS) -c "$(BIGINT_DIR)/bigint.c" -o "$(BIGINT_DIR)/build/bigint.o"
+	$(AR) rcs "$(BIGINT_DIR)/build/libreo_bigint.a" "$(BIGINT_DIR)/build/bigint.o"
+	@echo "built $(BIGINT_DIR)/build/libreo_bigint.a"
+
+test-bigint: bigint $(TARGET_REV)
+	REO_CC="$(CC)" "./$(TARGET_REV)" run "$(BIGINT_DIR)/demo_bigprime.reo" --lib-dir "$(BIGINT_DIR)/build" --link reo_bigint

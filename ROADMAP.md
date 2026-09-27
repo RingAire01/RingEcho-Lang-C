@@ -57,6 +57,16 @@ rev build app.reo --include test.h --lib-dir . --link reverietest -o out.exe
 | D2 | 生成 C 告警噪声 | clang 下 `-Wunused-value`、`-Wparentheses-equality` |
 | D3 | `module` 为保留字 | 常见参数名冲突（如 `GetProcAddress` 的 `module`） |
 
+## P3 — 外部库（不改进语言内核）
+
+| # | 项 | 现状 |
+|---|----|------|
+| E1 | 外挂大整数 | `libs/bigint/` 提供任意精度无符号整数，经 T1+T2 通道绑定；`demo_bigprime.reo` 用 768 位质数做自校验（`make test-bigint`） |
+
+RingEcho 原生整数止于 128 位（`i128`/`u128`）。大整数**不进入语言内核**，而是作为
+外部 C 库：Reo 用 `extern` 声明其函数、以 `u64` 承载不透明句柄，构建时用
+`--include` / `--lib-dir` / `--link` 绑定。同一方式可绑定 GMP、libtommath 等。
+
 ## 验收方式
 
 每项应给出最小可复现命令与期望输出。例如：

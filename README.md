@@ -102,10 +102,28 @@ rvm remote             # List available versions
 - LSP server: JSON-RPC + diagnostics
 - Multi-file modules (import with recursive resolution)
 - extern C FFI
+- External arbitrary-precision integers (`libs/bigint/`, see below)
 - Conditional compilation with `@cfg(windows|macos|linux)` on top-level declarations
 - char type with full escape support
 - Virtual environments (`.renv/`) with bundled stdlib (`std::io`, `std::math`, `std::string`, `std::vec`)
 - Project configuration via `ringecho.toml`
+
+## External big integers
+
+Primitive integers end at 128 bits. Big integers are supplied as an external C
+library rather than a language feature, bound through the FFI channel
+(`extern` declarations plus `--include` / `--lib-dir` / `--link`), with values
+carried as opaque `u64` handles:
+
+```bash
+make test-bigint
+# equivalent:
+rev run libs/bigint/demo_bigprime.reo --lib-dir libs/bigint/build --link reo_bigint
+```
+
+The demo loads a 768-bit prime, shows it has no factor below one million, and
+self-checks subtraction and multiplication — all past the native range. See
+[libs/bigint/README.md](libs/bigint/README.md).
 
 ## Testing
 
