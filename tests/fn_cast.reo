@@ -1,0 +1,10 @@
+// Function pointer <-> integer casts: take a function's address as an integer,
+// cast it back to a function pointer, and call through it.
+
+extern { fn puts(message: str) -> i32; }
+
+fn main() {
+    let addr: u64 = puts as u64;
+    let call: fn(str) -> i32 = addr as fn(str) -> i32;
+    println(call("fn cast round trip"));
+}

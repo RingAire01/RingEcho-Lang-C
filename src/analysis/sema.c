@@ -1048,7 +1048,9 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                           || (s_num && d_num)                        /* numeric <-> numeric */
                           || (s_int_like && d_int_like)              /* bool/char <-> integer */
                           || (sk == RE0_TYPE_STR && d_int_like)           /* str -> numeric */
-                          || (s_int_like && dk == RE0_TYPE_STR);          /* numeric -> str */
+                          || (s_int_like && dk == RE0_TYPE_STR)           /* numeric -> str */
+                          || (s_int_like && dk == RE0_TYPE_FN)            /* integer <-> function pointer */
+                          || (sk == RE0_TYPE_FN && d_int_like);
                 if (e->cast.checked && src && src->kind == RE0_TYPE_ARRAY && target->kind == RE0_TYPE_ARRAY &&
                     src->array.inner && target->array.inner && src->array.inner->kind < RE0_TYPE_STR && target->array.inner->kind < RE0_TYPE_STR)
                     legal = true;

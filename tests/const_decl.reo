@@ -1,0 +1,9 @@
+// const declarations (top-level) require a trailing ';'.
+
+const K: i32 = 7;
+const NAME: str = "reverie";
+
+fn main() {
+    println(K);
+    println(NAME);
+}

@@ -53,6 +53,17 @@ static bool c_gen_array_conversion(Re0Codegen *c, Re0Expr *e) {
 int c_gen_cast(Re0Codegen *c, Re0Expr *e) {
     Re0Buffer *out = &c->output;
     if (c_gen_array_conversion(c, e)) return 0;
+    /* Integer <-> function pointer: emit a plain C cast. */
+    {
+        Re0Type *src_t = e->cast.inner ? e->cast.inner->resolved_type : NULL;
+        Re0Type *dst_t = e->resolved_type;
+        if ((src_t && src_t->kind == RE0_TYPE_FN) || (dst_t && dst_t->kind == RE0_TYPE_FN)) {
+            re0_buffer_write_fmt(out, "((%s)(", reo_type_to_c(e->cast.target_type));
+            c_gen_expr(c, e->cast.inner);
+            re0_buffer_write_str(out, "))");
+            return 0;
+        }
+    }
     Re0TypeKind source = c_expr_scalar_kind(e->cast.inner);
     Re0TypeKind target = e->resolved_type ? e->resolved_type->kind : RE0_TYPE_UNKNOWN;
     if (e->cast.checked && e->resolved_type && e->resolved_type->kind == RE0_TYPE_GENERIC)

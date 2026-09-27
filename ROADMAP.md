@@ -21,7 +21,7 @@
 |---|------|------|------|
 | T1 | C `#include` 通道 | ✅ 已实现 | `--include <h>` → gcc `-include` |
 | T2 | 链接参数通道 | ✅ 已实现 | `--lib-dir <d>` / `--link <l>` → gcc `-L` / `-l` |
-| T3 | 整数到函数指针转换 | ⬜ 未实现 | `invalid cast from 'u64' to 'fn'`；`LoadLibrary`+`GetProcAddress` 式动态派发 |
+| T3 | 整数 ⇄ 函数指针转换 | ✅ 已实现 | `f as u64` 与 `addr as fn(...)`；`LoadLibrary`+`GetProcAddress` 式动态派发 |
 
 `rev run/build` 现支持可重复的 `--include`、`--lib-dir`、`--link`（各上限
 `RE0_BUILD_MAX_FLAGS` = 16），分别透传为 gcc 的 `-include`、`-L`、`-l`。
@@ -45,7 +45,7 @@ rev build app.reo --include test.h --lib-dir . --link reverietest -o out.exe
 | L2 | 全局/静态状态 | 无 globals | 运行时单例、注册表、句柄表 |
 | L3 | Windows 线程/异步 | `spawn/await` 基于 pthread，Win32 线程模型未验证 | 事件循环与异步 I/O |
 | L4 | 调试信息 | 未发射 DWARF/PDB | 宿主排障 |
-| L5 | `const` 声明 | 无 | 常量与 ABI 数值（当前只能写成函数或字面量） |
+| L5 | `const` 声明 | ✅ 已支持（需 `;`） | 顶层/局部常量 |
 | L6 | 命名空间/模块限定 | 全局扁平，无限定名 | 库无法隔离符号；ABI 名不能加前缀 |
 | L7 | 条件编译 `@cfg(os)` | ✅ 已实现 | 按目标 OS 保留/丢弃顶层声明（不作用于 import） |
 
