@@ -15,7 +15,6 @@
 #endif
 
 [Setup]
-SetupArchitecture=x86
 AppId=RingAire.RingEcho.{#Arch}
 AppName=RingEcho
 AppVersion={#Version}
