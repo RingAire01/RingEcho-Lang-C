@@ -4,6 +4,7 @@
 #include "exec/native_build.h"
 #include "backend/native.h"
 #include "exec/workspace.h"
+#include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,6 +56,36 @@ typedef struct {
     CompileCtx    *ctx;
 } StageMgr;
 
+/* Does an @cfg(<arg>) condition match the host we are compiling for? */
+static bool cfg_matches(const char *arg) {
+    if (!arg) return true;
+#if defined(RE0_PLATFORM_WINDOWS)
+    return strcmp(arg, "windows") == 0;
+#elif defined(RE0_PLATFORM_MACOS)
+    return strcmp(arg, "macos") == 0;
+#elif defined(RE0_PLATFORM_LINUX)
+    return strcmp(arg, "linux") == 0;
+#else
+    return true;
+#endif
+}
+
+/* Drop top-level declarations guarded by a non-matching @cfg(...). Runs after
+ * the workspace merges imports, so it only filters declarations (not imports). */
+static void filter_cfg(Re0StmtVec *stmts) {
+    size_t w = 0;
+    for (size_t i = 0; i < stmts->len; i++) {
+        Re0Stmt *s = stmts->data[i];
+        if (s && s->kind == STMT_ATTRIBUTE && s->attribute.attr_name &&
+            strcmp(s->attribute.attr_name, "cfg") == 0 &&
+            !cfg_matches(s->attribute.attr_arg)) {
+            continue;
+        }
+        stmts->data[w++] = s;
+    }
+    stmts->len = w;
+}
+
 static bool stage_frontend_run(Re0Manager *m) {
     StageMgr *s = (StageMgr*)m;
     CompileCtx *ctx = s->ctx;
@@ -65,6 +96,7 @@ static bool stage_frontend_run(Re0Manager *m) {
     ctx->stmts = re0_workspace_load(&ws, ctx->path, c->arena, &c->errors,
                                     &c->lexer, &c->parser);
     re0_workspace_free(&ws);
+    filter_cfg(&ctx->stmts);
     re0_manager_emit_event(m, RE0_EV_LEXER_DONE, NULL, NULL);
     if (Re0StmtVec_len(&ctx->stmts) == 0) {
         re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,

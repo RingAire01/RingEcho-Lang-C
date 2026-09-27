@@ -102,6 +102,7 @@ rvm remote             # List available versions
 - LSP server: JSON-RPC + diagnostics
 - Multi-file modules (import with recursive resolution)
 - extern C FFI
+- Conditional compilation with `@cfg(windows|macos|linux)` on top-level declarations
 - char type with full escape support
 - Virtual environments (`.renv/`) with bundled stdlib (`std::io`, `std::math`, `std::string`, `std::vec`)
 - Project configuration via `ringecho.toml`

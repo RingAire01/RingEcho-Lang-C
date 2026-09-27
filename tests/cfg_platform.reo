@@ -1,0 +1,21 @@
+// @cfg keeps only the declaration matching the host OS. Exactly one
+// platform_id must survive, so this also fails if filtering does not run.
+
+@cfg(windows)
+fn platform_id() -> i64 {
+    return 1;
+}
+
+@cfg(linux)
+fn platform_id() -> i64 {
+    return 2;
+}
+
+@cfg(macos)
+fn platform_id() -> i64 {
+    return 3;
+}
+
+fn main() {
+    println(platform_id());
+}

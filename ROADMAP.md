@@ -47,6 +47,7 @@ rev build app.reo --include test.h --lib-dir . --link reverietest -o out.exe
 | L4 | 调试信息 | 未发射 DWARF/PDB | 宿主排障 |
 | L5 | `const` 声明 | 无 | 常量与 ABI 数值（当前只能写成函数或字面量） |
 | L6 | 命名空间/模块限定 | 全局扁平，无限定名 | 库无法隔离符号；ABI 名不能加前缀 |
+| L7 | 条件编译 `@cfg(os)` | ✅ 已实现 | 按目标 OS 保留/丢弃顶层声明（不作用于 import） |
 
 ## P2 — 诊断与工具
 
