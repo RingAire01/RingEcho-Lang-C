@@ -39,6 +39,7 @@
 #define RVM_DIR ".rvm"
 #define RVM_VERSIONS_DIR ".rvm/versions"
 #define RVM_CURRENT ".rvm/current"
+#define RVM_CURRENT_VERSION ".rvm/current.version"
 #define RVM_DEFAULT_VERSION "0.2.1"
 
 static void print_usage(void) {
@@ -61,6 +62,31 @@ static bool valid_version(const char *v) {
               (*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == '_')) return false;
     }
     return true;
+}
+
+/* Release asset naming: ringecho-<version>-<platform>-<arch>.zip */
+static const char *rvm_platform(void) {
+#if defined(RE0_PLATFORM_WINDOWS)
+    return "windows";
+#elif defined(RE0_PLATFORM_MACOS)
+    return "macos";
+#else
+    return "linux";
+#endif
+}
+
+static const char *rvm_arch(void) {
+#if defined(_M_ARM64) || defined(__aarch64__)
+    return "arm64";
+#elif defined(_M_IX86) || defined(__i386__)
+    return "x86";
+#else
+    return "x64";
+#endif
+}
+
+static void rvm_payload(const char *version, char *out, size_t cap) {
+    snprintf(out, cap, "ringecho-%s-%s-%s", version, rvm_platform(), rvm_arch());
 }
 
 static bool make_path(const char *path) {
@@ -99,21 +125,19 @@ static int run_program(const char *prog, char *const argv[]) {
 
 static void get_home_dir(char *out, size_t cap) {
 #if defined(RE0_PLATFORM_WINDOWS)
+    /* USERPROFILE is already the full home; HOMEPATH is relative to HOMEDRIVE
+     * and must never be appended to USERPROFILE. */
     const char *home = getenv("USERPROFILE");
-    if (!home) home = getenv("HOMEDRIVE");
-    if (home) {
-        const char *home_path = getenv("HOMEPATH");
-        if (home_path) {
-            snprintf(out, cap, "%s%s", home, home_path);
-            return;
-        }
-    }
+    if (home && *home) { snprintf(out, cap, "%s", home); return; }
+    const char *drive = getenv("HOMEDRIVE");
+    const char *path = getenv("HOMEPATH");
+    if (drive && path) { snprintf(out, cap, "%s%s", drive, path); return; }
     home = getenv("HOME");
-    if (home) { snprintf(out, cap, "%s", home); return; }
+    if (home && *home) { snprintf(out, cap, "%s", home); return; }
     snprintf(out, cap, ".");
 #else
     const char *home = getenv("HOME");
-    if (home) { snprintf(out, cap, "%s", home); return; }
+    if (home && *home) { snprintf(out, cap, "%s", home); return; }
     snprintf(out, cap, ".");
 #endif
 }
@@ -141,6 +165,12 @@ static void get_current_link(char *out, size_t cap) {
     snprintf(out, cap, "%s/%s", home, RVM_CURRENT);
 }
 
+static void get_current_version_path(char *out, size_t cap) {
+    char home[512];
+    get_home_dir(home, sizeof(home));
+    snprintf(out, cap, "%s/%s", home, RVM_CURRENT_VERSION);
+}
+
 static int cmd_install(const char *version) {
     if (!version) {
         fprintf(stderr, "usage: rvm install <version>\n");
@@ -165,37 +195,47 @@ static int cmd_install(const char *version) {
         return 0;
     }
 
-    printf("Installing RingEcho %s...\n", version);
+    char payload[256];
+    rvm_payload(version, payload, sizeof(payload));
+
     char url[1024];
-#if defined(RE0_PLATFORM_WINDOWS)
     snprintf(url, sizeof(url),
-             "https://github.com/RingAire01/RingEcho-Lang-C/releases/download/v%s/rev-windows-x86_64.exe",
-             version);
-#else
-    snprintf(url, sizeof(url),
-             "https://github.com/RingAire01/RingEcho-Lang-C/releases/download/v%s/rev-linux-x86_64",
-             version);
-#endif
+             "https://github.com/RingAire01/RingEcho-Lang-C/releases/download/v%s/%s.zip",
+             version, payload);
 
     if (!make_path(version_dir)) {
         fprintf(stderr, "cannot create version directory\n");
         return 1;
     }
 
-    char rev_path[1100];
-    snprintf(rev_path, sizeof(rev_path), "%s/rev%s", version_dir,
-             RE0_PLATFORM_EXECUTABLE_SUFFIX);
-    char *curl_argv[] = { "curl", "-sL", url, "-o", rev_path, NULL };
+    printf("Installing RingEcho %s...\n", version);
+    char zip_path[900];
+    snprintf(zip_path, sizeof(zip_path), "%s/%s.zip", versions_dir, version);
+    char *curl_argv[] = { "curl", "-sL", url, "-o", zip_path, NULL };
     int rc = run_program("curl", curl_argv);
-    if (rc == 0) {
-#if !defined(RE0_PLATFORM_WINDOWS)
-        char *chmod_argv[] = { "chmod", "+x", rev_path, NULL };
-        run_program("chmod", chmod_argv);
-#endif
-    }
     if (rc != 0) {
         printf("Failed to download version %s\n", version);
         printf("Check: https://github.com/RingAire01/RingEcho-Lang-C/releases\n");
+        return 1;
+    }
+
+#if defined(RE0_PLATFORM_WINDOWS)
+    char *extract_argv[] = { "tar", "-xf", zip_path, "-C", version_dir, NULL };
+#else
+    char *extract_argv[] = { "unzip", "-q", "-o", zip_path, "-d", version_dir, NULL };
+#endif
+    rc = run_program(extract_argv[0], extract_argv);
+    remove(zip_path);
+    if (rc != 0) {
+        printf("Failed to extract version %s (need 'tar' on Windows or 'unzip' elsewhere)\n", version);
+        return 1;
+    }
+
+    char bin_dir[1000];
+    snprintf(bin_dir, sizeof(bin_dir), "%s/%s/bin", version_dir, payload);
+    struct stat bin_st;
+    if (stat(bin_dir, &bin_st) != 0) {
+        printf("unexpected package layout for %s\n", version);
         return 1;
     }
 
@@ -220,8 +260,13 @@ static int cmd_use(const char *version) {
     char version_dir[700];
     snprintf(version_dir, sizeof(version_dir), "%s/%s", versions_dir, version);
 
+    char payload[256];
+    rvm_payload(version, payload, sizeof(payload));
+    char bin_dir[1000];
+    snprintf(bin_dir, sizeof(bin_dir), "%s/%s/bin", version_dir, payload);
+
     struct stat st;
-    if (stat(version_dir, &st) != 0) {
+    if (stat(bin_dir, &st) != 0) {
         fprintf(stderr, "version %s is not installed (run 'rvm install %s')\n", version, version);
         return 1;
     }
@@ -229,19 +274,42 @@ static int cmd_use(const char *version) {
     char current_link[600];
     get_current_link(current_link, sizeof(current_link));
 #if defined(RE0_PLATFORM_WINDOWS)
-    DeleteFileA(current_link);
-    CreateSymbolicLinkA(current_link, version_dir, 0);
+    /* Directory junctions do not require administrator rights, unlike
+     * symbolic links. mklink needs backslash paths: it treats '/' as a switch. */
+    char link_win[600], target_win[1000];
+    snprintf(link_win, sizeof(link_win), "%s", current_link);
+    snprintf(target_win, sizeof(target_win), "%s", bin_dir);
+    for (char *p = link_win; *p; p++) if (*p == '/') *p = '\\';
+    for (char *p = target_win; *p; p++) if (*p == '/') *p = '\\';
+    DeleteFileA(link_win);
+    RemoveDirectoryA(link_win);
+    {
+        char *link_argv[] = { "cmd", "/c", "mklink", "/J", link_win, target_win, NULL };
+        if (run_program("cmd", link_argv) != 0) {
+            fprintf(stderr, "cannot create junction '%s' -> '%s'\n", link_win, target_win);
+            return 1;
+        }
+    }
 #else
     unlink(current_link);
-    if (symlink(version_dir, current_link) != 0) {
+    if (symlink(bin_dir, current_link) != 0) {
         fprintf(stderr, "cannot create symlink '%s' -> '%s': %s\n",
-                current_link, version_dir, strerror(errno));
+                current_link, bin_dir, strerror(errno));
         return 1;
     }
 #endif
 
+    char marker[600];
+    get_current_version_path(marker, sizeof(marker));
+    FILE *mf = fopen(marker, "w");
+    if (mf) { fprintf(mf, "%s\n", version); fclose(mf); }
+
     printf("Now using RingEcho %s\n", version);
+#if defined(RE0_PLATFORM_WINDOWS)
+    printf("Add to PATH: set PATH=%%USERPROFILE%%\\.rvm\\current;%%PATH%%\n");
+#else
     printf("Add to PATH: export PATH=\"%s:$PATH\"\n", current_link);
+#endif
     return 0;
 }
 
@@ -289,38 +357,20 @@ static int cmd_current(void) {
     char current_link[600];
     get_current_link(current_link, sizeof(current_link));
 
-    char buf[512];
-#if defined(RE0_PLATFORM_WINDOWS)
-    DWORD len = 0;
-    {
-        HANDLE h = CreateFileA(current_link, GENERIC_READ, FILE_SHARE_READ,
-                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (h == INVALID_HANDLE_VALUE) {
-            printf("No version selected (using system default: %s)\n", RVM_DEFAULT_VERSION);
-            return 0;
-        }
-        len = GetFinalPathNameByHandleA(h, buf, sizeof(buf) - 1, 0);
-        CloseHandle(h);
-    }
-    if (len == 0 || len >= sizeof(buf)) {
+    (void)current_link;
+    char marker[600];
+    get_current_version_path(marker, sizeof(marker));
+
+    char buf[256];
+    FILE *f = fopen(marker, "r");
+    if (!f || !fgets(buf, sizeof(buf), f)) {
+        if (f) fclose(f);
         printf("No version selected (using system default: %s)\n", RVM_DEFAULT_VERSION);
         return 0;
     }
-    buf[len] = '\0';
-#else
-    ssize_t len = readlink(current_link, buf, sizeof(buf) - 1);
-    if (len <= 0) {
-        printf("No version selected (using system default: %s)\n", RVM_DEFAULT_VERSION);
-        return 0;
-    }
-    buf[len] = '\0';
-#endif
-
-    char *ver = strrchr(buf, RE0_SEP);
-    if (ver) ver++;
-    else ver = buf;
-
-    printf("Current: %s\n", ver);
+    fclose(f);
+    buf[strcspn(buf, "\r\n")] = '\0';
+    printf("Current: %s\n", buf);
     return 0;
 }
 
