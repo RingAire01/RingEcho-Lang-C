@@ -62,6 +62,7 @@ bool n_encode(NModule *m) {
     switch (m->target->arch) {
         case RE0_ARCH_X86_64: return n_encode_x64(m);
         case RE0_ARCH_X86: return n_encode_x86(m);
+        case RE0_ARCH_AARCH64: return n_encode_a64(m);
         default:
             n_error(m, RE0_SPAN_ZERO, "code generation for this target is not implemented");
             return false;

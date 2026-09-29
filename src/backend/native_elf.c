@@ -5,7 +5,8 @@
  * Encode fields explicitly instead of serializing host structs. */
 enum { ELF_HEADER = 64, ELF_SECTION = 64, ELF_SYMBOL = 24, ELF_RELA = 24,
        SECTION_COUNT = 7, S_TEXT = 1, S_RELA = 2, S_SYM = 3, S_STR = 4,
-       S_NAMES = 5, S_STACK = 6, R_X86_64_PLT32 = 4 };
+       S_NAMES = 5, S_STACK = 6, R_X86_64_PLT32 = 4, R_AARCH64_CALL26 = 283,
+       EM_X86_64 = 62, EM_AARCH64 = 183 };
 
 static void align8(Re0Buffer *b) {
     /* Bounded even if buffer growth fails and len stops advancing. */
@@ -27,6 +28,10 @@ static void section(Re0Buffer *b, size_t name, unsigned type, unsigned flags,
 
 bool n_elf64(NModule *m) {
     Re0Buffer *b = &m->codegen->output, strings, symbols;
+    bool aarch64 = m->target->arch == RE0_ARCH_AARCH64;
+    unsigned machine = aarch64 ? EM_AARCH64 : EM_X86_64;
+    unsigned reloc_type = aarch64 ? R_AARCH64_CALL26 : R_X86_64_PLT32;
+    uint64_t addend = aarch64 ? 0 : (uint64_t)(int64_t)-4;
     re0_buffer_init(&strings); re0_buffer_init(&symbols);
     n_put(&strings, 0, 1);
     for (unsigned i = 0; i < ELF_SYMBOL; i++) n_put(&symbols, 0, 1);
@@ -41,7 +46,7 @@ bool n_elf64(NModule *m) {
     }
     for (unsigned i = 0; i < ELF_HEADER; i++) n_put(b, 0, 1);
     n_patch(b, 0, UINT64_C(0x00010102464c457f), 8); /* ELF64, little endian */
-    n_patch(b, 16, 1, 2); n_patch(b, 18, 62, 2); n_patch(b, 20, 1, 4); /* REL, X86_64, CURRENT */
+    n_patch(b, 16, 1, 2); n_patch(b, 18, machine, 2); n_patch(b, 20, 1, 4); /* REL, machine, CURRENT */
     n_patch(b, 52, ELF_HEADER, 2); n_patch(b, 58, ELF_SECTION, 2);
     n_patch(b, 60, SECTION_COUNT, 2); n_patch(b, 62, S_NAMES, 2);
     size_t text = b->len; re0_buffer_write_n(b, m->text.data, m->text.len); align8(b);
@@ -52,8 +57,8 @@ bool n_elf64(NModule *m) {
             n_error(m, RE0_SPAN_ZERO, "invalid ELF relocation"); break;
         }
         n_put(b, r->offset, 8);
-        n_put(b, ((uint64_t)(r->symbol + 1) << 32) | R_X86_64_PLT32, 8);
-        n_put(b, UINT64_MAX - 3, 8); /* explicit addend -4 */
+        n_put(b, ((uint64_t)(r->symbol + 1) << 32) | reloc_type, 8);
+        n_put(b, addend, 8);
     }
     size_t sym = b->len; re0_buffer_write_n(b, symbols.data, symbols.len);
     size_t str = b->len; re0_buffer_write_n(b, strings.data, strings.len);

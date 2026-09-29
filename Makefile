@@ -89,7 +89,7 @@ ANALYSIS_SRCS := $(ANALYSIS)/sema.c $(ANALYSIS)/scope.c $(ANALYSIS)/model.c $(AN
 BACKEND_SRCS := $(BACKEND)/codegen.c $(BACKEND)/backend_c.c $(BACKEND)/backend_c_type.c $(BACKEND)/backend_c_generic.c $(BACKEND)/backend_c_expr.c $(BACKEND)/backend_c_stmt.c $(BACKEND)/backend_reo.c $(BACKEND)/runtime_c.c $(BACKEND)/runtime_conversion.c $(BACKEND)/backend_c_cast.c
 LSP_DIR := src/lsp
 BACKEND_SRCS += $(BACKEND)/native.c $(BACKEND)/native_lower.c $(BACKEND)/native_target.c
-BACKEND_SRCS += $(BACKEND)/native_x64.c $(BACKEND)/native_x86.c $(BACKEND)/native_elf.c $(BACKEND)/native_elf32.c
+BACKEND_SRCS += $(BACKEND)/native_x64.c $(BACKEND)/native_x86.c $(BACKEND)/native_a64.c $(BACKEND)/native_elf.c $(BACKEND)/native_elf32.c
 ANALYSIS_SRCS += $(ANALYSIS)/layout.c
 BACKEND_SRCS += $(BACKEND)/native_x64_float.c
 BACKEND_SRCS += $(BACKEND)/c_storage.c $(BACKEND)/c_sequence.c
@@ -228,6 +228,10 @@ test-native: $(TARGET_REV)
 .PHONY: test-native-i386
 test-native-i386: $(TARGET_REV)
 	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/native -p "test_native_i386.py"
+
+.PHONY: test-native-aarch64
+test-native-aarch64: $(TARGET_REV)
+	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/native -p "test_native_aarch64.py"
 
 .PHONY: test-native-unit
 .PHONY: test-layout

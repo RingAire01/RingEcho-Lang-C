@@ -136,26 +136,30 @@ target/Release/rev build tests/native/basic.reo --backend native \
 - 浮点（`f32`/`f64`）与涉及浮点的转换尚未实现，遇到相关类型会明确报错，
   不会静默生成错误值。
 
-## TODO: AArch64（arm-v8）原生后端
+## aarch64 目标
 
-目标：在 x86-64 之后新增 `--target aarch64-unknown-linux-gnu`，同样只经
-`ld` 链接、不依赖 C 编译器。规划要点：
+目标 `aarch64-unknown-linux-gnu`：自写 ELF64（`EM_AARCH64`，
+`R_AARCH64_CALL26`），经 `ld -m aarch64elf` 链接，无 libc：
 
-1. **目标描述层**：`Re0TargetLayout` 已参数化（指针大小/对齐、int128 对齐、
-   对象上限），新增 `re0_target_aarch64_lp64` 即可复用现有布局计算；
-   SysV 分类器需增加 AAPCS64 规则（聚合超过 16 字节按 MEMORY 处理，
-   无 x86 式 SSE 混合分类）。
-2. **机器码编码**：AArch64 为定长 32 位指令，需按 `native_x64*.c` 的划分
-   新建 `native_a64*.c`（整数/浮点、`FMADD` 融合乘加可选）；现有栈式 IR
-   与验证器可复用，但调用暂存与 16 字节栈对齐规则不同。
-3. **ELF 与重定位**：`EM_AARCH64`，调用用 `R_AARCH64_CALL26`（±128MiB
-   范围检查），跨节引用需 `ADRP+ADD` 或 GOT 方案；`_start` 入口同样直调
-   `main` 后执行 `exit` 系统调用（AArch64 Linux 系统调用号与触发指令不同）。
-4. **链接与验证**：`REO_LD` 指定支持 `aarch64elf` 仿真的链接器；执行与
-   差分测试需要 qemu-aarch64 或真机，CI 矩阵单独标注，不得在 x86 宿主上
-   把 AArch64 执行测试伪装为通过。
-5. **前置条件**：先完成 x86-64 的聚合值、栈传参与指针表示，再复制到
-   AArch64，避免同时维护两套都不完整的 lowering；CLI 目标校验、
-   `--emit obj` 的跨架构行为与错误信息同步扩展。
+```bash
+target/Release/rev build tests/native/basic.reo --backend native \
+  --target aarch64-unknown-linux-gnu -o /tmp/basic
+```
+
+- 支持的语言子集与 x86-64 一致中的整数部分：`i8..i64`、`u8..u64`、`isize`/`usize`
+  （64 位指针）、`bool`、`char`、算术/位运算/移位/比较、`as` 转换、控制流、
+  直接调用与 `extern`。
+- 遵循 AAPCS64：参数使用 X0-X7（最多六个参数，全在寄存器），返回值在 X0，
+  SP 在调用点 16 字节对齐；调用方与 `gcc` 生成的代码经差分测试验证。
+  除法使用 `SDIV`/`UDIV`，并按 C 语义在除零与 `INT64_MIN / -1` 时显式陷入。
+- 浮点（`f32`/`f64`）与涉及浮点的转换尚未实现，遇到相关类型会明确报错。
+- 执行验证由 CI 的 `ubuntu-24.04-arm` 原生 runner 完成；其他宿主只做
+  `--emit obj` 与反汇编静态校验，不把跨架构执行伪装为通过。
+
+## TODO: 后续目标
+
+- x86-64/i386/aarch64 的浮点（`f32`/`f64`）与浮点转换。
+- armv7、macOS（Mach-O）、Windows（COFF + Microsoft ABI）。
+- 聚合值、栈传参（超过寄存器数量的参数）、指针表示与聚合 ABI 分类。
 
 完整类型迁移的设计、已完成部分与剩余工作见 [TYPE_SYSTEM.md](TYPE_SYSTEM.md)。

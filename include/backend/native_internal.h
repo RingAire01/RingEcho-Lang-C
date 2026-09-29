@@ -63,6 +63,7 @@ bool n_verify(NModule *m, NFunction *f);
  * entry stub into m->text and m->relocs. */
 bool n_encode_x64(NModule *m);
 bool n_encode_x86(NModule *m);
+bool n_encode_a64(NModule *m);
 /* Object writers: serialize m->text and m->relocs into codegen->output. */
 bool n_elf64(NModule *m);
 bool n_elf32(NModule *m);
