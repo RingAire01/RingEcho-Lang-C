@@ -88,10 +88,10 @@ static void local(Lower *l, const char *name, NType type) {
     }
     l->locals[l->local_count++] = (Local){name, type, l->f->slots++};
 }
-static bool compatible(NType actual, NType expected, Re0Expr *e) {
+static bool compatible(Lower *l, NType actual, NType expected, Re0Expr *e) {
     if (actual == expected && actual != N_INVALID) return true;
     if (e && e->kind == EXPR_INT && !e->int_lit.suffix && n_type_integer(expected))
-        return re0_integer_fits(e->int_lit.integer, n_type_bits(expected), n_type_signed(expected));
+        return re0_integer_fits(e->int_lit.integer, n_type_bits(l->m->target, expected), n_type_signed(expected));
     if (e && e->kind == EXPR_FLOAT && !e->float_lit.suffix && expected == N_F32)
         return e->float_lit.val >= -FLT_MAX && e->float_lit.val <= FLT_MAX &&
                (double)(float)e->float_lit.val == e->float_lit.val;
@@ -142,8 +142,8 @@ static NType binary(Lower *l, Re0Expr *e) {
         return operand;
     }
     if (a != b) {
-        if (compatible(a, b, e->binary.left)) a = b;
-        else if (compatible(b, a, e->binary.right)) b = a;
+        if (compatible(l, a, b, e->binary.left)) a = b;
+        else if (compatible(l, b, a, e->binary.right)) b = a;
     }
     if (a != b || (!n_type_integer(a) &&
         !(a == N_BOOL && (op == BINOP_EQ || op == BINOP_NE)) && !(a == N_CHAR && comparison)) ||
@@ -160,7 +160,7 @@ static NType expression_impl(Lower *l, Re0Expr *e) {
     if (type == N_INVALID) { fail(l, "expression type is not supported by native code generation yet"); return type; }
     switch (e->kind) {
         case EXPR_INT:
-            if (!re0_integer_fits(e->int_lit.integer, n_type_bits(type), n_type_signed(type))) {
+            if (!re0_integer_fits(e->int_lit.integer, n_type_bits(l->m->target, type), n_type_signed(type))) {
                 fail(l, "integer literal exceeds its type"); return N_INVALID;
             }
             emit(l, N_CONST, type, e->int_lit.integer.negative ?
@@ -222,7 +222,7 @@ static NType expression_impl(Lower *l, Re0Expr *e) {
             if (e->call.arg_count != f->param_count) { fail(l, "call argument count mismatch"); return N_INVALID; }
             for (int i = 0; i < f->param_count; i++) {
                 NType arg = expression(l, e->call.args[i]);
-                if (!compatible(arg, f->params[i], e->call.args[i])) fail(l, "call argument type mismatch");
+                if (!compatible(l, arg, f->params[i], e->call.args[i])) fail(l, "call argument type mismatch");
                 else if (arg != f->params[i]) emit(l, N_CONVERT, f->params[i], 0, arg);
             }
             emit(l, N_CALL, f->result, 0, index); return f->result;
@@ -265,7 +265,7 @@ static void statement(Lower *l, Re0Stmt *s) {
         case STMT_LET: {
             NType value = expression(l, s->let_stmt.init);
             NType type = s->let_stmt.type ? type_name(s->let_stmt.type) : value;
-            if (type == N_UNIT || !compatible(value, type, s->let_stmt.init)) {
+            if (type == N_UNIT || !compatible(l, value, type, s->let_stmt.init)) {
                 fail(l, "unsupported local type or initializer"); break;
             }
             local(l, s->let_stmt.name, type);
@@ -277,7 +277,7 @@ static void statement(Lower *l, Re0Stmt *s) {
             if (!v) { fail(l, "assignment requires a local variable"); break; }
             if (s->assign.op != BINOP_ASSIGN_SENTINEL) emit(l, N_LOAD, v->type, 0, v->slot);
             NType value = expression(l, s->assign.value);
-            if (!compatible(value, v->type, s->assign.value)) fail(l, "assignment type mismatch");
+            if (!compatible(l, value, v->type, s->assign.value)) fail(l, "assignment type mismatch");
             else if (value != v->type) emit(l, N_CONVERT, v->type, 0, value);
             if (s->assign.op != BINOP_ASSIGN_SENTINEL) {
                 if (!n_type_integer(v->type) && !n_type_float(v->type)) fail(l, "compound assignment requires a number");
@@ -290,7 +290,7 @@ static void statement(Lower *l, Re0Stmt *s) {
             NType value = N_UNIT;
             if (s->return_stmt.value) value = expression(l, s->return_stmt.value);
             else emit(l, N_CONST, N_UNIT, 0, 0);
-            if (!compatible(value, l->f->result, s->return_stmt.value)) fail(l, "return type mismatch");
+            if (!compatible(l, value, l->f->result, s->return_stmt.value)) fail(l, "return type mismatch");
             else if (value != l->f->result) emit(l, N_CONVERT, l->f->result, 0, value);
             emit(l, N_RETURN, l->f->result, 0, 0); break;
         }

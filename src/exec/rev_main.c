@@ -317,17 +317,21 @@ int main(int argc, char **argv) {
         }
     }
     bool emit_object = emit_name && strcmp(emit_name, "obj") == 0;
+    const Re0NativeTarget *native_target = NULL;
     if (backend == &re0_backend_native) {
-        if ((target_name && strcmp(target_name, "x86_64-unknown-linux-gnu") != 0) ||
-            shared || (emit_name && !emit_object && strcmp(emit_name, "exe") != 0) ||
+        if (shared || (emit_name && !emit_object && strcmp(emit_name, "exe") != 0) ||
             (emit_object && strcmp(cmd, "run") == 0)) {
-            fprintf(stderr, "native backend supports x86_64-unknown-linux-gnu, --emit obj|exe, and no --shared\n"); return 1;
+            fprintf(stderr, "native backend supports --emit obj|exe and no --shared\n"); return 1;
         }
-#if !defined(__linux__) || !defined(__x86_64__)
-        if (strcmp(cmd, "run") == 0) {
-            fprintf(stderr, "native run requires an x86-64 Linux host\n"); return 1;
+        native_target = target_name ? re0_native_target_find(target_name) : re0_native_target_host();
+        if (!native_target) {
+            if (target_name) fprintf(stderr, "unknown native target: %s\n", target_name);
+            else fprintf(stderr, "no native target for this host; pass --target <triple>\n");
+            return 1;
         }
-#endif
+        if (!re0_native_target_supported(native_target)) {
+            fprintf(stderr, "native target is not implemented yet: %s\n", native_target->triple); return 1;
+        }
         if (emit_object && !explicit_output) output = "output.o";
     } else {
         if (emit_name) { fprintf(stderr, "--emit currently requires --backend native\n"); return 1; }
@@ -348,6 +352,7 @@ int main(int argc, char **argv) {
     comp.shared = shared;
     comp.wasm = wasm;
     comp.emit_object = emit_object;
+    if (native_target) comp.native_target = native_target;
     for (int i = 0; i < include_count; i++) (void)re0_build_add_include(&comp.build, includes[i]);
     for (int i = 0; i < lib_dir_count; i++) (void)re0_build_add_lib_dir(&comp.build, lib_dirs[i]);
     for (int i = 0; i < link_count; i++) (void)re0_build_add_link(&comp.build, links[i]);

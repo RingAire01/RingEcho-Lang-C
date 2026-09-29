@@ -37,6 +37,8 @@ void re0_compiler_init(Re0Compiler *c, Re0Backend *backend) {
     re0_parser_init(&c->parser, c->arena, &c->errors);
     re0_sema_init(&c->sema, c->arena, &c->errors, &c->model, &c->builtins);
     re0_codegen_init(&c->codegen, &c->errors, &c->model, backend);
+    c->native_target = re0_native_target_host();
+    c->codegen.native_target = c->native_target;
     re0_build_init(&c->build, &c->errors);
     c->gc = re0_gc_new(RE0_GC_DEFAULT_THRESHOLD);
     c->gc_mode = RE0_GC_NONE;
@@ -153,7 +155,8 @@ static bool stage_build_run(Re0Manager *m) {
     if (re0_manager_should_cancel(m)) return false;
     re0_manager_emit_event(m, RE0_EV_BUILD_START, NULL, NULL);
     if (c->backend == &re0_backend_native) {
-        if (c->shared || c->wasm || !re0_native_build(&c->build, &c->codegen.output, ctx->output, c->emit_object))
+        if (c->shared || c->wasm ||
+            !re0_native_build(&c->build, &c->codegen.output, ctx->output, c->emit_object, c->native_target))
             c->had_error = true;
     } else if (c->wasm) {
         /* WebAssembly target: write the C source, then compile with the
@@ -217,6 +220,8 @@ bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *out
         c->had_error = true;
         return false;
     }
+    /* The target may have been selected on the CLI after init. */
+    c->codegen.native_target = c->native_target;
     re0_event_bus_reset(&c->bus);
 
     CompileCtx ctx;
@@ -255,12 +260,15 @@ bool re0_compiler_run(Re0Compiler *c, const char *path) {
         re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "cannot run a relocatable object");
         return false;
     }
-#if !defined(__linux__) || !defined(__x86_64__)
     if (c->backend == &re0_backend_native) {
-        re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "native run requires x86-64 Linux");
-        return false;
+        const Re0NativeTarget *host = re0_native_target_host();
+        const Re0NativeTarget *want = c->native_target ? c->native_target : host;
+        if (!host || !want || strcmp(host->triple, want->triple) != 0) {
+            re0_error_append(&c->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                             "cannot run a native binary built for another target");
+            return false;
+        }
     }
-#endif
     char tmpname[512];
     if (!re0_build_temp_output_path(&c->build, tmpname, sizeof(tmpname))) {
         c->had_error = true;

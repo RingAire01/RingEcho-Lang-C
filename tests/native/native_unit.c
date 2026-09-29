@@ -24,7 +24,7 @@ static bool elf_allocation_case(unsigned failure, unsigned *allocations) {
     re0_buffer_init(&m.text);
     re0_buffer_write_str(&m.text, "abc");
     allocation_count = 0; fail_at = failure;
-    bool ok = n_elf(&m);
+    bool ok = n_elf64(&m);
     unsigned count = allocation_count;
     fail_at = 0;
     bool expected = failure == 0 || count < failure;

@@ -4,5 +4,6 @@
 #include "backend/backend.h"
 #include "backend/codegen.h"
 #include "backend/native.h"
+#include "backend/native_target.h"
 
 #endif

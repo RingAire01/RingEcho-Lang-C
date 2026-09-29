@@ -1,6 +1,7 @@
 #include "backend/backend.h"
 #include "backend/backend_c_internal.h"
 #include "backend/native.h"
+#include "backend/native_target.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@ void re0_codegen_init(Re0Codegen *c, Re0ErrorList *errors,
     c->errors = errors;
     c->model = model;
     c->backend = backend;
+    c->native_target = re0_native_target_host();
     c->temp_counter = 0;
     c->label_counter = 0;
     c->reg_counter = 0;

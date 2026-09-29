@@ -25,7 +25,7 @@ static void section(Re0Buffer *b, size_t name, unsigned type, unsigned flags,
     n_put(b, alignment, 8); n_put(b, entry_size, 8);
 }
 
-bool n_elf(NModule *m) {
+bool n_elf64(NModule *m) {
     Re0Buffer *b = &m->codegen->output, strings, symbols;
     re0_buffer_init(&strings); re0_buffer_init(&symbols);
     n_put(&strings, 0, 1);

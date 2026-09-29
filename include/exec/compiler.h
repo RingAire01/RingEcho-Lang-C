@@ -8,6 +8,7 @@
 #include "front/parser.h"
 #include "analysis/sema.h"
 #include "backend/backend.h"
+#include "backend/native_target.h"
 #include "exec/build.h"
 #include "analysis/lint.h"
 #include "extra/re0_gc.h"
@@ -35,8 +36,10 @@ typedef struct {
      * plus the wasi-sdk clang. The build writes the C source and invokes
      * clang --target=wasm32-wasi instead of gcc. */
     bool                wasm;
-    /* Native backend: emit an ELF64 relocatable object instead of linking. */
+    /* Native backend: emit a relocatable object instead of linking. */
     bool                emit_object;
+    /* Native backend target; NULL selects the compiling host. */
+    const Re0NativeTarget *native_target;
     Re0EventBus         bus;
 } Re0Compiler;
 

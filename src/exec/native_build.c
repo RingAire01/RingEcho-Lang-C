@@ -1,4 +1,5 @@
 #include "exec/native_build.h"
+#include "backend/native_target.h"
 #include "exec/process.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,11 +10,31 @@
 #include <sys/stat.h>
 #endif
 
+#if defined(__linux__)
+/* GNU ld emulation name for an ELF target, or NULL when unsupported. */
+static const char *elf_emulation(const Re0NativeTarget *target) {
+    switch (target->arch) {
+        case RE0_ARCH_X86_64: return "elf_x86_64";
+        case RE0_ARCH_X86: return "elf_i386";
+        case RE0_ARCH_AARCH64: return "aarch64elf";
+        case RE0_ARCH_ARM: return "armelf_linux_eabi";
+        default: return NULL;
+    }
+}
+#endif
+
 /* Files are published by rename from an exclusive adjacent temporary file.
  * Link failures leave the prior destination intact. No shell is involved. */
 bool re0_native_build(Re0Build *build, const Re0Buffer *object,
-                      const char *output, bool emit_object) {
+                      const char *output, bool emit_object,
+                      const Re0NativeTarget *target) {
     if (!build || !object || object->failed || !object->len || !output || !*output) return false;
+    const Re0NativeTarget *t = target ? target : re0_native_target_host();
+    if (!t) {
+        re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                         "no native target for this host; pass --target <triple>");
+        return false;
+    }
 #if defined(__linux__)
     const size_t max_output = 4096;
     size_t length = strlen(output);
@@ -52,13 +73,20 @@ bool re0_native_build(Re0Build *build, const Re0Buffer *object,
     if (ok && !emit_object) {
         const char *linker = getenv("REO_LD");
         if (!linker || !*linker) linker = "ld";
-        const char *args[] = {linker, "-m", "elf_x86_64", "-z", "noexecstack",
-                             "--build-id=none", "-e", "_start", "-o", temporary, object_path, NULL};
-        int rc = re0_process_run(linker, args);
-        if (rc != 0) {
+        const char *emulation = elf_emulation(t);
+        if (!emulation) {
             re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                             "native linker failed (exit code %d); extern symbols require external linking of --emit obj output", rc);
+                             "linking this target is not supported yet; use --emit obj");
             ok = false;
+        } else {
+            const char *args[] = {linker, "-m", emulation, "-z", "noexecstack",
+                                 "--build-id=none", "-e", "_start", "-o", temporary, object_path, NULL};
+            int rc = re0_process_run(linker, args);
+            if (rc != 0) {
+                re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                                 "native linker failed (exit code %d); extern symbols require external linking of --emit obj output", rc);
+                ok = false;
+            }
         }
     }
     if (ok && chmod(temporary, emit_object ? 0600 : 0700) != 0) ok = false;

@@ -46,12 +46,12 @@ void n_x64_float_binary(Re0Buffer *b, Re0BinOpKind op, NType type) {
     from_xmm0(b, type);
 }
 
-static void float_to_integer(Re0Buffer *b, NType to) {
+static void float_to_integer(Re0Buffer *b, const Re0NativeTarget *target, NType to) {
     /* Input is f64 in xmm0. Match the C runtime: NaN -> 0 and saturate
      * before truncation; unsigned 64-bit values need a 2^63 split. */
     CODE(b, 0x66,0x0f,0x2e,0xc0);
     size_t nan = jump(b, 0x8a);
-    unsigned bits = n_type_bits(to);
+    unsigned bits = n_type_bits(target, to);
     bool sign = n_type_signed(to);
     double upper = sign ? (double)(UINT64_C(1) << (bits - 1)) :
                    bits == 64 ? 18446744073709551616.0 : (double)(UINT64_C(1) << bits);
@@ -85,7 +85,7 @@ static void float_to_integer(Re0Buffer *b, NType to) {
     bind(b, done1); bind(b, done2); bind(b, done3);
 }
 
-void n_x64_float_convert(Re0Buffer *b, NType from, NType to) {
+void n_x64_float_convert(Re0Buffer *b, const Re0NativeTarget *target, NType from, NType to) {
     if (n_type_float(from)) {
         to_xmm0(b);
         if (n_type_float(to)) {
@@ -96,11 +96,11 @@ void n_x64_float_convert(Re0Buffer *b, NType from, NType to) {
             if (to == N_BOOL) {
                 CODE(b, 0x66,0x0f,0xef,0xc9, 0x66,0x0f,0x2e,0xc1,
                         0x0f,0x95,0xc0, 0x0f,0x9a,0xc2, 0x08,0xd0, 0x0f,0xb6,0xc0);
-            } else float_to_integer(b, to);
+            } else float_to_integer(b, target, to);
         }
     } else {
         unsigned char prefix = to == N_F32 ? 0xf3 : 0xf2;
-        if (!n_type_signed(from) && n_type_bits(from) == 64) {
+        if (!n_type_signed(from) && n_type_bits(target, from) == 64) {
             CODE(b, 0x48,0x85,0xc0);
             size_t small = jump(b, 0x89); /* sign bit not set */
             CODE(b, 0x48,0x89,0xc2, 0x83,0xe2,0x01, 0x48,0xd1,0xe8, 0x48,0x09,0xd0,

@@ -8,12 +8,16 @@
 #include <stdbool.h>
 
 typedef struct Re0Codegen Re0Codegen;
+typedef struct Re0NativeTarget Re0NativeTarget;
 
 struct Re0Codegen {
     Re0Buffer         output;
     Re0ErrorList     *errors;
     Re0SemanticModel *model;
     const struct Re0Backend *backend;
+    /* Selected target for the native backend; ignored by the C/REO backends.
+     * When NULL the native backend falls back to the compiling host. */
+    const Re0NativeTarget *native_target;
     int temp_counter;
     int label_counter;
     int reg_counter;

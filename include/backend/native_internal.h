@@ -1,12 +1,13 @@
 #ifndef RE0_NATIVE_INTERNAL_H
 #define RE0_NATIVE_INTERNAL_H
 #include "backend/native.h"
+#include "backend/native_target.h"
 #include <stdint.h>
 
 enum {
     N_MAX_FUNCTIONS = 1024, N_MAX_LOCALS = 1024, N_MAX_IR = 65536,
     N_MAX_TOTAL_IR = 262144, N_MAX_DEPTH = 128, N_MAX_PARAMS = 6,
-    N_MAX_TEXT = 16 * 1024 * 1024, N_STACK_ALIGN = 16, N_WORD = 8
+    N_MAX_TEXT = 16 * 1024 * 1024, N_WORD = 8
 };
 typedef enum {
     N_UNIT, N_I64, N_U64, N_BOOL,
@@ -39,6 +40,7 @@ typedef struct {
 typedef struct { size_t offset, symbol; } NReloc;
 typedef struct {
     Re0Codegen *codegen;
+    const Re0NativeTarget *target;
     NFunction *functions;
     size_t count, total_ir;
     Re0Buffer text;
@@ -49,16 +51,25 @@ typedef struct {
 
 void n_error(NModule *m, Re0Span span, const char *message);
 Re0TypeKind n_type_kind(NType type);
-unsigned n_type_bits(NType type);
+unsigned n_type_bits(const Re0NativeTarget *target, NType type);
 bool n_type_signed(NType type);
 bool n_type_integer(NType type);
 bool n_type_float(NType type);
 void n_x64_float_binary(Re0Buffer *b, Re0BinOpKind op, NType type);
-void n_x64_float_convert(Re0Buffer *b, NType from, NType to);
+void n_x64_float_convert(Re0Buffer *b, const Re0NativeTarget *target, NType from, NType to);
 bool n_lower(NModule *m, Re0StmtVec *checked);
 bool n_verify(NModule *m, NFunction *f);
+/* Architecture encoders: emit machine code for every defined function and the
+ * entry stub into m->text and m->relocs. */
+bool n_encode_x64(NModule *m);
+/* Object writers: serialize m->text and m->relocs into codegen->output. */
+bool n_elf64(NModule *m);
+/* Arch/format dispatch owned by native.c. */
 bool n_encode(NModule *m);
-bool n_elf(NModule *m);
+bool n_object(NModule *m);
 void n_put(Re0Buffer *b, uint64_t value, unsigned bytes);
 void n_patch(Re0Buffer *b, size_t offset, uint64_t value, unsigned bytes);
+/* Appends a call relocation placeholder (architecture/format specific opcode
+ * bytes are written by the caller; this records offset + symbol index). */
+void n_reloc_add(NModule *m, size_t offset, size_t symbol);
 #endif
