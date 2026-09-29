@@ -117,9 +117,10 @@ jobs:
           make CONFIG=Release PYTHON=python test-conversion
           make CONFIG=Release PYTHON=python test-match
           make CONFIG=Release PYTHON=python test-bigint
-      - name: 实验性 x86-64 原生后端回归
+      - name: 实验性原生后端回归（x86-64 与 i686）
         if: matrix.platform == 'linux' && matrix.arch == 'x64'
         run: |
+          sudo apt-get install --no-install-recommends -y gcc-multilib
           ulimit -c 0
           make CONFIG=Release PYTHON=python test-native
           make CONFIG=Release test-native-unit

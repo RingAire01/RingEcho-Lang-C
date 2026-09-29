@@ -117,6 +117,25 @@ ELF 对齐填充采用有界循环，避免 OOM 时因长度不再增长而无�
 后续重点：更多参数的栈传参、128 位与聚合值、指针和数据布局、独立可配置 panic 接口、
 原生调试信息，再扩展到完整语言覆盖和自举验证。
 
+## i686（i386）目标
+
+目标 `i686-unknown-linux-gnu`：自写 ELF32（`EM_386`，SHT_REL + `R_386_PC32`），
+经 `ld -m elf_i386` 链接，无 libc。命令行示例：
+
+```bash
+target/Release/rev build tests/native/basic.reo --backend native \
+  --target i686-unknown-linux-gnu -o /tmp/basic
+```
+
+- 支持的语言子集与 x86-64 一致中的整数部分：`i8..i64`、`u8..u64`、`isize`/`usize`
+  （32 位指针）、`bool`、`char`、算术/位运算/移位/比较、`as` 转换、控制流、
+  直接调用与 `extern`。64 位整数使用 EDX:EAX 寄存器对，除法为软件长除法。
+- 参数按 i386 System V 规则自右向左入栈（每参数 4 字节，64 位占 8 字节，
+  不做额外 8 字节对齐），返回值整数在 EAX / EDX:EAX；与 `gcc -m32` 生成的
+  调用方经差分测试验证。
+- 浮点（`f32`/`f64`）与涉及浮点的转换尚未实现，遇到相关类型会明确报错，
+  不会静默生成错误值。
+
 ## TODO: AArch64（arm-v8）原生后端
 
 目标：在 x86-64 之后新增 `--target aarch64-unknown-linux-gnu`，同样只经
