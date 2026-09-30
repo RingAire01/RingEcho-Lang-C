@@ -137,7 +137,7 @@ jobs:
         if: matrix.platform == 'linux' && matrix.arch == 'x64'
         run: |
           ulimit -c 0
-          sudo apt-get install --no-install-recommends -y qemu-user gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
+          sudo apt-get install --no-install-recommends -y qemu-user gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf libc6-dev-armhf-cross
           make CONFIG=Release PYTHON=python test-native-arm
       - name: 记录 32 位运行时限制
         if: matrix.arch == 'x86'
