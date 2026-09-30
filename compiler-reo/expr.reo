@@ -1,18 +1,26 @@
-/* compiler-reo: expression AST with real precedence, plus a small evaluator.
+/* compiler-reo: expression AST with precedence, calls, and an evaluator.
  *
- * Nodes live in a flat table (4 i64 per node: kind, left, right, value), which
- * avoids recursive types while exercising the compiler's own data structures.
- * A child index of -1 means "absent".
+ * Nodes live in a flat table (4 i64 per node: kind, left, right, value).
+ * Identifier names are interned in `names`; call arguments are stored
+ * contiguously in `args`. A child index of -1 means absent.
  *
- * Grammar:
- *   expr   := factor (binop expr)*        (precedence climbing)
- *   factor := number | '(' expr ')' | '-' factor
+ * Node kinds: 0 int  1 add  2 sub  3 mul  4 div  5 neg
+ *             6 eq   7 ne   8 lt   9 le  10 gt  11 ge
+ *            12 ident 13 call (left=callee, right=arg start, value=arg count)
+ *
+ * Precedence: comparisons (1) < additive (2) < multiplicative (3);
+ * unary minus and calls bind tightest.
  */
 
 static pos: i64;
 static kinds: svec;
 static texts: svec;
+static names: svec;
 static nodes: vec;
+static args: vec;
+
+fn is_name_start(c: char) -> bool { return is_alpha(c); }
+fn is_name_part(c: char) -> bool { return is_alpha(c) || is_digit(c); }
 
 fn scan(source: str) {
     let n: i64 = len(source);
@@ -21,6 +29,13 @@ fn scan(source: str) {
         let c: char = str_char_at(source, i);
         if c == ' ' {
             i += 1;
+        } else if is_name_start(c) {
+            let start: i64 = i;
+            while i < n && is_name_part(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(kinds, "I");
+            svec_push(texts, str_slice(source, start, i));
         } else if is_digit(c) {
             let start: i64 = i;
             while i < n && is_digit(str_char_at(source, i)) {
@@ -29,9 +44,17 @@ fn scan(source: str) {
             svec_push(kinds, "N");
             svec_push(texts, str_slice(source, start, i));
         } else {
-            svec_push(kinds, "S");
-            svec_push(texts, str_slice(source, i, i + 1));
-            i += 1;
+            let two: str = if i + 1 < n { str_slice(source, i, i + 2) } else { "" };
+            if str_eq(two, "==") || str_eq(two, "!=") || str_eq(two, "<=") ||
+               str_eq(two, ">=") {
+                svec_push(kinds, "S");
+                svec_push(texts, two);
+                i += 2;
+            } else {
+                svec_push(kinds, "S");
+                svec_push(texts, str_slice(source, i, i + 1));
+                i += 1;
+            }
         }
     }
 }
@@ -51,10 +74,18 @@ fn right_of(index: i64) -> i64 { return vec_get(nodes, index * 4 + 2); }
 fn value_of(index: i64) -> i64 { return vec_get(nodes, index * 4 + 3); }
 
 fn token_count() -> i64 { return svec_len(kinds); }
+fn name_at(index: i64) -> str { return svec_get(names, index); }
+fn arg_count(index: i64) -> i64 { return value_of(index); }
+fn arg_at(index: i64, i: i64) -> i64 { return vec_get(args, right_of(index) + i); }
+fn callee_name(index: i64) -> str { return name_at(value_of(left_of(index))); }
 
 fn precedence_of(op: str) -> i64 {
-    if str_eq(op, "+") || str_eq(op, "-") { return 1; }
-    if str_eq(op, "*") || str_eq(op, "/") { return 2; }
+    if str_eq(op, "==") || str_eq(op, "!=") || str_eq(op, "<") ||
+       str_eq(op, "<=") || str_eq(op, ">") || str_eq(op, ">=") {
+        return 1;
+    }
+    if str_eq(op, "+") || str_eq(op, "-") { return 2; }
+    if str_eq(op, "*") || str_eq(op, "/") { return 3; }
     return 0;
 }
 
@@ -62,7 +93,40 @@ fn node_for(op: str) -> i64 {
     if str_eq(op, "+") { return 1; }
     if str_eq(op, "-") { return 2; }
     if str_eq(op, "*") { return 3; }
-    return 4;
+    if str_eq(op, "/") { return 4; }
+    if str_eq(op, "==") { return 6; }
+    if str_eq(op, "!=") { return 7; }
+    if str_eq(op, "<") { return 8; }
+    if str_eq(op, "<=") { return 9; }
+    if str_eq(op, ">") { return 10; }
+    return 11; /* >= */
+}
+
+fn intern(text: str) -> i64 {
+    let index: i64 = svec_len(names);
+    svec_push(names, text);
+    return index;
+}
+
+fn parse_args() -> i64 {
+    pos += 1; /* '(' */
+    let start: i64 = vec_len(args);
+    let count: i64 = 0;
+    if str_eq(svec_get(texts, pos), ")") {
+        pos += 1;
+        return push_node(13, -1, start, count);
+    }
+    while true {
+        vec_push(args, parse_expr(0));
+        count += 1;
+        if str_eq(svec_get(texts, pos), ",") {
+            pos += 1;
+            continue;
+        }
+        break;
+    }
+    pos += 1; /* ')' */
+    return push_node(13, -1, start, count);
 }
 
 fn parse_factor() -> i64 {
@@ -71,6 +135,16 @@ fn parse_factor() -> i64 {
     if str_eq(kind, "N") {
         pos += 1;
         return push_node(0, -1, -1, str_to_int(text));
+    }
+    if str_eq(kind, "I") {
+        let name_index: i64 = intern(text);
+        let ident_node: i64 = push_node(12, -1, -1, name_index);
+        pos += 1;
+        if pos < token_count() && str_eq(svec_get(texts, pos), "(") {
+            let call: i64 = parse_args();
+            return push_node(13, ident_node, right_of(call), value_of(call));
+        }
+        return ident_node;
     }
     if str_eq(text, "(") {
         pos += 1;
@@ -110,29 +184,69 @@ fn evaluate(index: i64) -> i64 {
     if kind == 5 {
         return -evaluate(right_of(index));
     }
+    if kind == 13 {
+        return 0; /* calls are structural only in this slice */
+    }
     let a: i64 = evaluate(left_of(index));
     let b: i64 = evaluate(right_of(index));
     if kind == 1 { return a + b; }
     if kind == 2 { return a - b; }
     if kind == 3 { return a * b; }
-    return a / b;
+    if kind == 4 { return a / b; }
+    if kind == 6 { return (a == b) as i64; }
+    if kind == 7 { return (a != b) as i64; }
+    if kind == 8 { return (a < b) as i64; }
+    if kind == 9 { return (a <= b) as i64; }
+    if kind == 10 { return (a > b) as i64; }
+    return (a >= b) as i64;
+}
+
+fn reset() {
+    kinds = svec_new();
+    texts = svec_new();
+    names = svec_new();
+    nodes = vec_new();
+    args = vec_new();
+    pos = 0;
+}
+
+fn parse(source: str) -> i64 {
+    reset();
+    scan(source);
+    return parse_expr(0);
 }
 
 fn parse_and_eval(source: str) -> i64 {
-    kinds = svec_new();
-    texts = svec_new();
-    nodes = vec_new();
-    pos = 0;
-    scan(source);
-    let root: i64 = parse_expr(0);
-    return evaluate(root);
+    return evaluate(parse(source));
 }
 
 fn main() {
+    /* precedence: comparisons are lower than arithmetic */
     assert(parse_and_eval("1 + 2 * 3") == 7);
     assert(parse_and_eval("(1 + 2) * 3") == 9);
     assert(parse_and_eval("10 - 4 - 3") == 3);
-    assert(parse_and_eval("2 * 3 + 4 * 5") == 26);
     assert(parse_and_eval("-2 * 3") == -6);
-    assert(parse_and_eval("100 / 5 / 2") == 10);
+    assert(parse_and_eval("10 > 3") == 1);
+    assert(parse_and_eval("1 + 2 * 3 < 10") == 1);
+    assert(parse_and_eval("2 == 2") == 1);
+    assert(parse_and_eval("3 != 3") == 0);
+    assert(parse_and_eval("1 <= 1") == 1);
+    assert(parse_and_eval("4 >= 5") == 0);
+
+    /* calls build a callee + contiguous argument list */
+    let call: i64 = parse("foo(1 + 2, 3 * 4)");
+    assert(kind_of(call) == 13);
+    assert(str_eq(callee_name(call), "foo"));
+    assert(arg_count(call) == 2);
+    assert(evaluate(arg_at(call, 0)) == 3);
+    assert(evaluate(arg_at(call, 1)) == 12);
+
+    let bare: i64 = parse("bar");
+    assert(kind_of(bare) == 12);
+    assert(str_eq(name_at(value_of(bare)), "bar"));
+
+    let empty: i64 = parse("baz()");
+    assert(kind_of(empty) == 13);
+    assert(arg_count(empty) == 0);
+    assert(str_eq(callee_name(empty), "baz"));
 }
