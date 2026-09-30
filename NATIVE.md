@@ -189,10 +189,28 @@ target/Release/rev build tests/native/basic.reo --backend native \
   macOS 的退出系统调用（x86-64 `0x2000001`，arm64 `x16=1; svc #0x80`）。
 - 由 CI 的 `macos-15-intel` / `macos-15` 原生 runner 执行验证。
 
+## Windows 目标（COFF）
+
+目标 `x86_64-pc-windows-msvc`：自写 PE/COFF 可重定位对象
+（`IMAGE_FILE_MACHINE_AMD64`，`.text`，外部符号，`IMAGE_REL_AMD64_REL32`
+跳转重定位），符号不带下划线前缀：
+
+```bat
+rev build tests/native/basic.reo --backend native ^
+  --target x86_64-pc-windows-msvc --emit obj -o basic.obj
+```
+
+- 机器码采用 Microsoft x64 调用约定：前四个整数参数在 RCX/RDX/R8/R9、
+  前四个浮点在 XMM0-3，其余入栈；调用方预留 32 字节 shadow space 并保证
+  16 字节对齐。返回值在 RAX/XMM0。
+- 直接可执行输出（`--emit exe`）在 Windows 上尚未实现，请使用 `--emit obj`
+  交给 `link.exe` / `lld-link` 或与其他目标文件一起链接。
+- 由 CI 的 `windows-2025`（x64）安装包验证流程执行对象与 ABI 回归。
+
 ## TODO: 后续目标
 
 - 各目标（i386/aarch64/armv7）的浮点（`f32`/`f64`）与浮点转换（x86-64 已支持）。
-- Windows（COFF + Microsoft ABI，x86-64/x86/arm64）。
+- Windows x86/arm64 的 COFF 与 Microsoft ABI，以及 Windows 可执行链接。
 - 聚合值、指针表示与聚合 ABI 分类。
 
 完整类型迁移的设计、已完成部分与剩余工作见 [TYPE_SYSTEM.md](TYPE_SYSTEM.md)。

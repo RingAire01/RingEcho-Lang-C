@@ -216,10 +216,13 @@ jobs:
         include:
           - runner: windows-2025
             arch: x64
+            native: '1'
           - runner: windows-2025
             arch: x86
+            native: '0'
           - runner: windows-11-arm
             arch: arm64
+            native: '0'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -230,8 +233,10 @@ jobs:
         with:
           name: ringecho-windows-${{ matrix.arch }}-installer
           path: target/installers
-      - name: 安装、启动、语义检查及卸载
+      - name: 安装、启动、语义检查、原生后端及卸载
         shell: pwsh
+        env:
+          NATIVE_WINDOWS_TEST: ${{ matrix.native }}
         run: ./scripts/ci/windows-smoke.ps1
 
   package-gate:

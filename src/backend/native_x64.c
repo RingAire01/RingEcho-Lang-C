@@ -101,15 +101,25 @@ static void function(NModule *m, NFunction *f) {
     size_t align = m->target->stack_align;
     size_t frame = (f->slots * N_WORD + align - 1) & ~(size_t)(align - 1);
     n_put(b, frame, 4);
-    static const unsigned char registers[N_MAX_PARAMS] = {7,6,2,1,8,9};
-    unsigned gp = 0, fp = 0;
+    static const unsigned char sysv_regs[N_MAX_PARAMS] = {7,6,2,1,8,9}; /* rdi rsi rdx rcx r8 r9 */
+    static const unsigned char ms_regs[4] = {1,2,8,9};                  /* rcx rdx r8 r9 */
+    bool ms = m->target->abi == RE0_ABI_MS64;
+    unsigned gp = 0, fp = 0, stack = 0;
     for (int i = 0; i < f->param_count; i++) {
         if (n_type_float(f->params[i])) {
-            CODE(b, 0x66);
-            if (f->params[i] == N_F64) CODE(b, 0x48);
-            CODE(b, 0x0f,0x7e,(unsigned char)(0xc0 | (fp++ << 3)));
+            if (ms && fp >= 4) {                       /* 5th+ float arg on the stack */
+                uint32_t off = 48 + 8 * stack++;
+                CODE(b, f->params[i] == N_F64 ? 0xf2 : 0xf3, 0x0f,0x10, 0x85); n_put(b, off, 4);
+            } else {
+                CODE(b, 0x66);
+                if (f->params[i] == N_F64) CODE(b, 0x48);
+                CODE(b, 0x0f,0x7e,(unsigned char)(0xc0 | (fp++ << 3)));
+            }
+        } else if (ms && gp >= 4) {                    /* 5th+ integer arg on the stack */
+            uint32_t off = 48 + 8 * stack++;
+            CODE(b, 0x48, 0x8b, 0x85); n_put(b, off, 4); /* mov rax, [rbp+off] */
         } else {
-            unsigned char reg = registers[gp++];
+            unsigned char reg = ms ? ms_regs[gp++] : sysv_regs[gp++];
             CODE(b, reg >= 8 ? 0x4c : 0x48, 0x89, (unsigned char)(0xc0 | ((reg & 7) << 3)));
         }
         if (f->params[i] == N_BOOL) { CODE(b, 0x0f,0xb6,0xc0); boolean(b); }
@@ -145,24 +155,66 @@ static void function(NModule *m, NFunction *f) {
                 normalize(b, m->target, in->type); CODE(b, 0x50); break;
             case N_CALL: {
                 NFunction *target = &m->functions[in->arg];
-                unsigned assigned[N_MAX_PARAMS], call_gp = 0, call_fp = 0;
-                for (int j = 0; j < target->param_count; j++)
-                    assigned[j] = n_type_float(target->params[j]) ? call_fp++ : registers[call_gp++];
-                for (int j = target->param_count; j > 0; j--) {
-                    unsigned reg = assigned[j - 1];
-                    if (n_type_float(target->params[j - 1])) {
-                        CODE(b, 0x58, 0x66);
-                        if (target->params[j - 1] == N_F64) CODE(b, 0x48);
-                        CODE(b, 0x0f,0x6e,(unsigned char)(0xc0 | (reg << 3)));
-                    } else {
-                        if (reg >= 8) CODE(b, 0x41);
-                        CODE(b, (unsigned char)(0x58 + (reg & 7)));
+                static const unsigned char sregs[N_MAX_PARAMS] = {7,6,2,1,8,9};
+                if (m->target->abi == RE0_ABI_MS64) {
+                    /* Microsoft x64: rcx/rdx/r8/r9 and xmm0-3, 32-byte shadow
+                     * space, remaining arguments on the stack. */
+                    unsigned ireg[N_MAX_PARAMS], freg[N_MAX_PARAMS], stk[N_MAX_PARAMS];
+                    bool onstk[N_MAX_PARAMS];
+                    unsigned gp = 0, fp = 0, S = 0;
+                    for (int j = 0; j < target->param_count; j++) {
+                        if (n_type_float(target->params[j])) {
+                            if (fp < 4) { freg[j] = fp++; onstk[j] = false; }
+                            else { onstk[j] = true; stk[j] = S++; }
+                        } else if (gp < 4) { ireg[j] = gp++; onstk[j] = false; }
+                        else { onstk[j] = true; stk[j] = S++; }
                     }
+                    size_t alloc = 32 + 8 * (size_t)S;
+                    if (((8 * (size_t)in->depth + alloc) & 15) != 0) alloc += 8;
+                    if (alloc <= 127) CODE(b, 0x48,0x83,0xec,(unsigned char)alloc);
+                    else { CODE(b, 0x48,0x81,0xec); n_put(b, alloc, 4); }
+                    for (int j = 0; j < target->param_count; j++) {
+                        uint32_t off = (uint32_t)(alloc + 8 * (target->param_count - 1 - j));
+                        if (onstk[j]) {
+                            CODE(b, 0x48,0x8b,0x84,0x24); n_put(b, off, 4);
+                            uint32_t dst = 32 + 8 * stk[j];
+                            CODE(b, 0x48,0x89,0x84,0x24); n_put(b, dst, 4);
+                        } else if (n_type_float(target->params[j])) {
+                            CODE(b, target->params[j] == N_F64 ? 0xf2 : 0xf3, 0x0f,0x10,
+                                 (unsigned char)(0x84 | (freg[j] << 3)), 0x24);
+                            n_put(b, off, 4);
+                        } else {
+                            unsigned r = ireg[j];
+                            CODE(b, r >= 8 ? 0x4c : 0x48, 0x8b,
+                                 (unsigned char)(0x84 | ((r & 7) << 3)), 0x24);
+                            n_put(b, off, 4);
+                        }
+                    }
+                    relocation(m, in->arg);
+                    if (alloc <= 127) CODE(b, 0x48,0x83,0xc4,(unsigned char)alloc);
+                    else { CODE(b, 0x48,0x81,0xc4); n_put(b, alloc, 4); }
+                    size_t drop = 8 * (size_t)target->param_count;
+                    if (drop) { CODE(b, 0x48,0x83,0xc4,(unsigned char)drop); }
+                } else {
+                    unsigned assigned[N_MAX_PARAMS], call_gp = 0, call_fp = 0;
+                    for (int j = 0; j < target->param_count; j++)
+                        assigned[j] = n_type_float(target->params[j]) ? call_fp++ : sregs[call_gp++];
+                    for (int j = target->param_count; j > 0; j--) {
+                        unsigned reg = assigned[j - 1];
+                        if (n_type_float(target->params[j - 1])) {
+                            CODE(b, 0x58, 0x66);
+                            if (target->params[j - 1] == N_F64) CODE(b, 0x48);
+                            CODE(b, 0x0f,0x6e,(unsigned char)(0xc0 | (reg << 3)));
+                        } else {
+                            if (reg >= 8) CODE(b, 0x41);
+                            CODE(b, (unsigned char)(0x58 + (reg & 7)));
+                        }
+                    }
+                    bool pad = ((in->depth - target->param_count) & 1) != 0;
+                    if (pad) CODE(b, 0x48,0x83,0xec,0x08);
+                    relocation(m, in->arg);
+                    if (pad) CODE(b, 0x48,0x83,0xc4,0x08);
                 }
-                bool pad = ((in->depth - target->param_count) & 1) != 0;
-                if (pad) CODE(b, 0x48,0x83,0xec,0x08);
-                relocation(m, in->arg);
-                if (pad) CODE(b, 0x48,0x83,0xc4,0x08);
                 if (n_type_float(target->result)) {
                     CODE(b, 0x66);
                     if (target->result == N_F64) CODE(b, 0x48);

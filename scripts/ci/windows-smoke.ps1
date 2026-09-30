@@ -14,6 +14,11 @@ if ($process.ExitCode -ne 0) { throw "安装失败：$($process.ExitCode)" }
 try {
     python scripts/ci/smoke.py (Join-Path $destination bin)
     if ($LASTEXITCODE -ne 0) { throw '安装后启动或语义检查失败' }
+    if ($env:NATIVE_WINDOWS_TEST -eq '1') {
+        $env:REO_TEST_COMPILER = (Join-Path $destination 'bin\rev.exe')
+        python -m unittest discover -s tests/native -p 'test_native_windows.py'
+        if ($LASTEXITCODE -ne 0) { throw 'Windows 原生后端回归失败' }
+    }
 } finally {
     $uninstaller = Join-Path $destination unins000.exe
     if (Test-Path $uninstaller) {

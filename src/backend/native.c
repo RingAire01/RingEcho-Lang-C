@@ -75,6 +75,7 @@ bool n_object(NModule *m) {
         case RE0_OBJ_ELF64: return n_elf64(m);
         case RE0_OBJ_ELF32: return n_elf32(m);
         case RE0_OBJ_MACHO64: return n_macho(m);
+        case RE0_OBJ_COFF: return n_coff(m);
         default:
             n_error(m, RE0_SPAN_ZERO, "object format for this target is not implemented");
             return false;

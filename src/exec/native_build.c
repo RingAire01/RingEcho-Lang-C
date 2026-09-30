@@ -9,6 +9,11 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#include <unistd.h>
+#endif
 
 #if defined(__linux__) || defined(__APPLE__)
 /* GNU ld emulation name for an ELF target, or NULL when unsupported. */
@@ -119,6 +124,43 @@ bool re0_native_build(Re0Build *build, const Re0Buffer *object,
     }
     if (*object_path && remove(object_path) != 0 && errno != ENOENT)
         re0_error_append(build->errors, RE0_WARN, RE0_SPAN_ZERO, NULL, "cannot remove native temporary object");
+    free(temporary);
+    return ok;
+#elif defined(_WIN32)
+    if (!emit_object) {
+        re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                         "native executable linking on Windows is not implemented; use --emit obj");
+        return false;
+    }
+    size_t length = strlen(output);
+    if (length > 4000) {
+        re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "native output path is too long");
+        return false;
+    }
+    const char suffix[] = ".reoXXXXXX";
+    char *temporary = malloc(length + sizeof(suffix));
+    if (!temporary) {
+        re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "cannot allocate native output path");
+        return false;
+    }
+    memcpy(temporary, output, length); memcpy(temporary + length, suffix, sizeof(suffix));
+    int fd = mkstemp(temporary);
+    if (fd < 0) {
+        re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "cannot create native output path");
+        free(temporary); return false;
+    }
+    bool ok = true;
+    FILE *file = fdopen(fd, "wb");
+    if (!file) { close(fd); ok = false; }
+    if (file) {
+        if (fwrite(object->data, 1, object->len, file) != object->len) ok = false;
+        if (fclose(file) != 0) ok = false;
+    }
+    if (ok && !MoveFileExA(temporary, output, MOVEFILE_REPLACE_EXISTING)) ok = false;
+    if (!ok) {
+        re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL, "native output was not published");
+        remove(temporary);
+    }
     free(temporary);
     return ok;
 #else
