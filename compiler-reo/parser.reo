@@ -1,0 +1,112 @@
+/* compiler-reo seed: lexer + a first parser slice.
+ *
+ * Tokenizes an in-memory source string and parses a flat program of
+ * `ident = number;` statements into parallel name/value lists. The parser is
+ * deliberately minimal; it is the first consumer of the token stream and the
+ * place where front-end data structures (buffers/maps) will be introduced.
+ *
+ * The assertions double as the regression check for `make test-selfhost`. */
+
+fn is_word_start(c: char) -> bool {
+    return is_alpha(c);
+}
+
+fn is_word_part(c: char) -> bool {
+    return is_alpha(c) || is_digit(c);
+}
+
+/* Tokenize into parallel vectors: kind codes ("I"/"N"/"S") and token text. */
+fn tokenize(source: str, kinds: svec, texts: svec) -> i64 {
+    let n: i64 = len(source);
+    let i: i64 = 0;
+    let count: i64 = 0;
+    while i < n {
+        let c: char = str_char_at(source, i);
+        if c == ' ' || c == '\n' || c == '\t' {
+            i += 1;
+        } else if is_word_start(c) {
+            let start: i64 = i;
+            while i < n && is_word_part(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(kinds, "I");
+            svec_push(texts, str_slice(source, start, i));
+            count += 1;
+        } else if is_digit(c) {
+            let start: i64 = i;
+            while i < n && is_digit(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(kinds, "N");
+            svec_push(texts, str_slice(source, start, i));
+            count += 1;
+        } else {
+            svec_push(kinds, "S");
+            svec_push(texts, str_slice(source, i, i + 1));
+            i += 1;
+            count += 1;
+        }
+    }
+    return count;
+}
+
+/* Parse `ident = number ;` statements into names/values. Returns the number of
+ * statements parsed. */
+fn parse_assignments(kinds: svec, texts: svec, names: svec, values: svec) -> i64 {
+    let total: i64 = svec_len(kinds);
+    let i: i64 = 0;
+    let statements: i64 = 0;
+    while i < total {
+        if !str_eq(svec_get(kinds, i), "I") {
+            return statements;
+        }
+        let name: str = svec_get(texts, i);
+        i += 1;
+        if i >= total || !str_eq(svec_get(texts, i), "=") {
+            return statements;
+        }
+        i += 1;
+        if i >= total || !str_eq(svec_get(kinds, i), "N") {
+            return statements;
+        }
+        let value: str = svec_get(texts, i);
+        i += 1;
+        if i >= total || !str_eq(svec_get(texts, i), ";") {
+            return statements;
+        }
+        i += 1;
+        svec_push(names, name);
+        svec_push(values, value);
+        statements += 1;
+    }
+    return statements;
+}
+
+fn main() {
+    let source: str = "a = 1; bb = 22; c = 333;";
+    let kinds: svec = svec_new();
+    let texts: svec = svec_new();
+    let tokens: i64 = tokenize(source, kinds, texts);
+    assert(tokens == 12);
+
+    let names: svec = svec_new();
+    let values: svec = svec_new();
+    let statements: i64 = parse_assignments(kinds, texts, names, values);
+    assert(statements == 3);
+
+    assert(str_eq(svec_get(names, 0), "a"));
+    assert(str_eq(svec_get(values, 0), "1"));
+    assert(str_eq(svec_get(names, 1), "bb"));
+    assert(str_eq(svec_get(values, 1), "22"));
+    assert(str_eq(svec_get(names, 2), "c"));
+    assert(str_eq(svec_get(values, 2), "333"));
+
+    /* Malformed tail must stop parsing without inventing statements. */
+    let bad_kinds: svec = svec_new();
+    let bad_texts: svec = svec_new();
+    let bad: i64 = tokenize("x = ;", bad_kinds, bad_texts);
+    let more_names: svec = svec_new();
+    let more_values: svec = svec_new();
+    assert(bad == 3);
+    assert(parse_assignments(bad_kinds, bad_texts, more_names, more_values) == 0);
+}

@@ -283,3 +283,4 @@ test-bigint: bigint $(TARGET_REV)
 .PHONY: test-selfhost
 test-selfhost: $(TARGET_REV)
 	"./$(TARGET_REV)" run compiler-reo/lexer.reo
+	"./$(TARGET_REV)" run compiler-reo/parser.reo
