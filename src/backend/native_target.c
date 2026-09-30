@@ -72,7 +72,8 @@ bool re0_native_target_supported(const Re0NativeTarget *target) {
         case RE0_OBJ_MACHO64:
             return target->arch == RE0_ARCH_X86_64 || target->arch == RE0_ARCH_AARCH64;
         case RE0_OBJ_COFF:
-            return target->arch == RE0_ARCH_X86_64;
+            return target->arch == RE0_ARCH_X86_64 || target->arch == RE0_ARCH_X86 ||
+                   target->arch == RE0_ARCH_AARCH64;
         default:
             return false;
     }

@@ -217,12 +217,15 @@ jobs:
           - runner: windows-2025
             arch: x64
             native: '1'
+            triple: x86_64-pc-windows-msvc
           - runner: windows-2025
             arch: x86
-            native: '0'
+            native: '1'
+            triple: i686-pc-windows-msvc
           - runner: windows-11-arm
             arch: arm64
-            native: '0'
+            native: '1'
+            triple: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -237,6 +240,7 @@ jobs:
         shell: pwsh
         env:
           NATIVE_WINDOWS_TEST: ${{ matrix.native }}
+          REO_NATIVE_TRIPLE: ${{ matrix.triple }}
         run: ./scripts/ci/windows-smoke.ps1
 
   package-gate:
