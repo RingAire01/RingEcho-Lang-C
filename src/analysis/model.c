@@ -21,6 +21,14 @@ void re0_model_init(Re0SemanticModel *m) {
  *  Struct / Enum registration (existing feature, plus type_params)
  * ════════════════════════════════════════ */
 
+void re0_model_set_struct_layout(Re0StructDef *def, int packed,
+                                 unsigned explicit_align, int transparent) {
+    if (!def) return;
+    def->packed = packed;
+    def->explicit_align = explicit_align;
+    def->transparent = transparent;
+}
+
 void re0_model_register_struct(Re0SemanticModel *m, const char *name,
                                char **field_names, char **field_types, int n) {
     if (!m || !name) return;

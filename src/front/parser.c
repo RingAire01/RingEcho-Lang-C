@@ -1036,15 +1036,53 @@ static Re0Stmt *parse_from_import(Re0Parser *p) {
 }
 
 /* ── @attr stmt or @attr(arg) stmt ── */
+/* Apply @align(N) / @repr(...) to the struct wrapped (through any nesting) by
+ * an attribute; invalid values are rejected at parse time. */
+static void apply_layout_attribute(Re0Parser *p, const char *name, const char *arg, Re0Stmt *inner) {
+    unsigned depth = 0;
+    while (inner && inner->kind == STMT_ATTRIBUTE && depth++ < 64) inner = inner->attribute.inner;
+    if (!inner || inner->kind != STMT_STRUCT) return;
+    if (strcmp(name, "align") == 0) {
+        if (!arg) { re0_error_append(p->errors, RE0_ERR_SYNTAX, inner->span, NULL,
+                                     "@align requires a power-of-two byte count"); p->had_error = true; return; }
+        char *end = NULL;
+        unsigned long v = strtoul(arg, &end, 10);
+        if (!end || *end != '\0' || v == 0 || (v & (v - 1)) || v > 4096) {
+            re0_error_append(p->errors, RE0_ERR_SYNTAX, inner->span, NULL,
+                             "invalid @align(%s): expected a power of two in 1..4096", arg);
+            p->had_error = true; return;
+        }
+        inner->struct_decl.explicit_align = (unsigned)v;
+    } else if (strcmp(name, "repr") == 0) {
+        if (!arg) { re0_error_append(p->errors, RE0_ERR_SYNTAX, inner->span, NULL,
+                                     "@repr requires an argument"); p->had_error = true; return; }
+        if (strcmp(arg, "C") == 0) { /* default layout; nothing to store */ }
+        else if (strcmp(arg, "packed") == 0) inner->struct_decl.packed = true;
+        else if (strcmp(arg, "transparent") == 0) inner->struct_decl.transparent = true;
+        else {
+            re0_error_append(p->errors, RE0_ERR_SYNTAX, inner->span, NULL,
+                             "unsupported @repr(%s): expected C, packed or transparent", arg);
+            p->had_error = true;
+        }
+    }
+}
+
 static Re0Stmt *parse_attribute(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p); /* '@' */
     Re0Token nm = expect(p, TK_IDENT);
     char *arg = NULL;
     if (check(p, TK_LPAREN)) { advance(p);
-        if (peek(p) && peek(p)->kind == TK_IDENT) { arg = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p); }
+        if (peek(p) && peek(p)->kind == TK_IDENT) {
+            arg = re0_arena_strdup(p->arena, peek(p)->str_val); advance(p);
+        } else if (peek(p) && peek(p)->kind == TK_NUMBER) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)peek(p)->int_val);
+            arg = re0_arena_strdup(p->arena, buf); advance(p);
+        }
         expect(p, TK_RPAREN);
     }
     Re0Stmt *inner = parse_stmt(p);
+    if (nm.str_val) apply_layout_attribute(p, nm.str_val, arg, inner);
     Re0Stmt *s = re0_stmt_make(STMT_ATTRIBUTE, span);
     s->attribute.attr_name = re0_arena_strdup(p->arena, nm.str_val);
     s->attribute.attr_arg = arg; s->attribute.inner = inner;

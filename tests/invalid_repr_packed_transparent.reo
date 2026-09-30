@@ -1,0 +1,5 @@
+/* @repr(packed) cannot be combined with @repr(transparent). */
+@repr(packed)
+@repr(transparent)
+struct Bad { a: i32 }
+fn main() {}

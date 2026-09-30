@@ -1,0 +1,4 @@
+/* @align(N) must not weaken the natural alignment. */
+@align(1)
+struct Bad { x: i64 }
+fn main() {}

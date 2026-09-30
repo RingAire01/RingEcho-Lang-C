@@ -110,7 +110,8 @@ struct Re0Stmt {
         struct { Re0Expr *value; } return_stmt;
         struct { Re0Expr *value; } break_stmt;
         struct { char *name; Re0FnParam *params; int param_count; char *ret_type; Re0Stmt **body; int body_count; char **type_params; int type_param_count; bool is_async; } function;
-        struct { char *name; Re0StructFieldDecl *fields; int field_count; char **type_params; int type_param_count; } struct_decl;
+        struct { char *name; Re0StructFieldDecl *fields; int field_count; char **type_params; int type_param_count;
+                 bool packed; unsigned explicit_align; bool transparent; } struct_decl;
         struct { char *name; Re0EnumVariantDecl *variants; int variant_count; } enum_decl;
         struct { char *name; Re0TraitMethodDecl *methods; int method_count; } trait_decl;
         struct { char *name; char *trait_name; Re0Stmt **methods; int method_count; char **type_params; int type_param_count; } impl;

@@ -198,7 +198,19 @@ static const char *record(const Re0Type *type, bool complete) {
     if (saved + (size_t)ac > 128) { c_storage_fail("generic binding depth exceeded"); return t->name; }
     for (int i = 0; i < ac; i++) storage.bindings[storage.binding_count++] = (Binding){def->struct_decl.type_params[i], args[i]};
     Re0Buffer body; re0_buffer_init(&body);
-    re0_buffer_write_fmt(&body, "struct %s { ", t->name);
+    re0_buffer_write_str(&body, "struct ");
+    if (def->kind == STMT_STRUCT) {
+        bool packed = def->struct_decl.packed;
+        unsigned al = def->struct_decl.explicit_align;
+        if (packed || al) {
+            re0_buffer_write_str(&body, "__attribute__((");
+            if (packed) re0_buffer_write_str(&body, "packed");
+            if (packed && al) re0_buffer_write_str(&body, ", ");
+            if (al) re0_buffer_write_fmt(&body, "aligned(%u)", al);
+            re0_buffer_write_str(&body, ")) ");
+        }
+    }
+    re0_buffer_write_fmt(&body, "%s { ", t->name);
     if (def->kind != STMT_ENUM) {
         int count=def->kind==STMT_STRUCT?def->struct_decl.field_count:def->component.state_count;
         Re0StructFieldDecl *fields=def->kind==STMT_STRUCT?def->struct_decl.fields:def->component.state;

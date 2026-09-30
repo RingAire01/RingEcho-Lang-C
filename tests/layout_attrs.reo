@@ -1,0 +1,41 @@
+/* Explicit layout: @repr(packed), @align(N), @repr(transparent), @repr(C).
+ * sizeof/alignof/offsetof must observe the RingEcho layout model. */
+
+@repr(C)
+struct Natural { x: i32, y: i64 }
+
+@repr(packed)
+struct Packed { a: u8, b: i32, c: u8 }
+
+@align(16)
+struct Aligned { x: i32 }
+
+@repr(packed)
+@align(8)
+struct PackedAligned { a: u8, b: u16 }
+
+@repr(transparent)
+struct Handle { raw: u64 }
+
+fn main() {
+    assert(sizeof<Natural>() == 16);
+    assert(alignof<Natural>() == 8);
+    assert(offsetof<Natural>("y") == 8);
+
+    assert(sizeof<Packed>() == 6);
+    assert(alignof<Packed>() == 1);
+    assert(offsetof<Packed>("a") == 0);
+    assert(offsetof<Packed>("b") == 1);
+    assert(offsetof<Packed>("c") == 5);
+
+    assert(sizeof<Aligned>() == 16);
+    assert(alignof<Aligned>() == 16);
+
+    assert(sizeof<PackedAligned>() == 8);
+    assert(alignof<PackedAligned>() == 8);
+    assert(offsetof<PackedAligned>("b") == 1);
+
+    assert(sizeof<Handle>() == 8);
+    assert(alignof<Handle>() == 8);
+    assert(offsetof<Handle>("raw") == 0);
+}

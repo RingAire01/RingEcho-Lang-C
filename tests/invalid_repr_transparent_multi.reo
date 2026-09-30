@@ -1,0 +1,4 @@
+/* @repr(transparent) requires exactly one field. */
+@repr(transparent)
+struct Bad { a: i32, b: i32 }
+fn main() {}

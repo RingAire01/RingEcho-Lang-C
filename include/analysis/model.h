@@ -15,6 +15,10 @@ typedef struct {
     int field_count;
     char **type_params;
     int type_param_count;
+    /* Explicit layout requests (see SYSTEMS.md): 0 = default C layout. */
+    int      packed;          /* @repr(packed): no field padding */
+    unsigned explicit_align;  /* @align(N): N (power of two), 0 = natural */
+    int      transparent;     /* @repr(transparent): single-field newtype */
 } Re0StructDef;
 
 /* ── Enum definition ── */
@@ -136,6 +140,9 @@ void         re0_model_register_fn(Re0SemanticModel *m, const char *name,
 Re0FnSignature *re0_model_find_fn(Re0SemanticModel *m, const char *name);
 
 Re0StructDef *re0_model_find_struct(Re0SemanticModel *m, const char *name);
+/* Attach explicit layout requests to a registered struct. */
+void          re0_model_set_struct_layout(Re0StructDef *def, int packed,
+                                          unsigned explicit_align, int transparent);
 Re0EnumDef   *re0_model_find_enum(Re0SemanticModel *m, const char *name);
 int           re0_model_variant_tag(Re0EnumDef *def, const char *variant_name);
 

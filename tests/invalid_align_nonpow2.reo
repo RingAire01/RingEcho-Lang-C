@@ -1,0 +1,3 @@
+@align(3)
+struct Bad { x: i32 }
+fn main() {}

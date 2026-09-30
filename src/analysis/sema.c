@@ -1596,6 +1596,22 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
                         re0_sema_own_type(s, sd->fields[j].type);
                 }
             }
+            /* Layout flags are applied (and validated eagerly) on every pass,
+             * because the global pre-pass already registered the struct. */
+            {
+                Re0StructDef *sd = re0_model_find_struct(s->model, stmt->struct_decl.name);
+                if (sd) {
+                    re0_model_set_struct_layout(sd, stmt->struct_decl.packed,
+                                                stmt->struct_decl.explicit_align,
+                                                stmt->struct_decl.transparent);
+                    if (stmt->struct_decl.packed || stmt->struct_decl.explicit_align ||
+                        stmt->struct_decl.transparent) {
+                        uint64_t dummy = 0;
+                        if (!sema_layout_query(s, stmt->struct_decl.name, NULL, false, &dummy))
+                            s->had_error = true;
+                    }
+                }
+            }
             break;
         }
         case STMT_ENUM: {

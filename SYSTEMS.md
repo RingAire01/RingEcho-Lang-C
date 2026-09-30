@@ -72,6 +72,25 @@ backend consumes the same value and the result is target-correct (e.g.
 `T` must currently be a single identifier (scalar, pointer, or named
 struct/enum); composite spellings are a later extension.
 
+### Explicit layout
+
+Struct layout is defined by RingEcho's layout model and then realized by each
+backend (the C backend emits the matching `__attribute__` s; the model is the
+source of truth, not the host compiler).
+
+- `@repr(C)` — default C-compatible layout (explicit; no attribute emitted).
+- `@repr(packed)` — fields are placed with no padding; the struct alignment
+  is 1 unless `@align` raises it.
+- `@align(N)` — N must be a power of two in `1..4096`; it raises the struct
+  alignment (it must not weaken the natural alignment, otherwise it is
+  rejected). Size is rounded up to the alignment.
+- `@repr(transparent)` — exactly one non-zero-sized field; the struct has the
+  field's size and alignment (newtype). Cannot be combined with packed.
+
+Invalid requests (`@align` not a power of two / out of range / weakening,
+`@repr(transparent)` with 0 or >1 fields, packed+transparent, unknown
+`@repr(kind)`) are rejected at compile time, eagerly on declaration.
+
 ## 2a. Arrays, slices and byte buffers
 
 - `[T; N]` is a contiguous value type; `sizeof([T; N]) == sizeof(T) * N`.
