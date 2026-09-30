@@ -335,6 +335,26 @@ static int c_gen_expr_impl(Re0Codegen *c, Re0Expr *e) {
                     re0_buffer_write_char(b, ')');
                     break;
                 }
+                if (strcmp(fn, "alloc") == 0 && e->call.arg_count == 1) {
+                    re0_buffer_write_str(b, "((void*)malloc((size_t)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_str(b, "))");
+                    break;
+                }
+                if (strcmp(fn, "alloc_zero") == 0 && e->call.arg_count == 1) {
+                    re0_buffer_write_str(b, "((void*)calloc(1, (size_t)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_str(b, "))");
+                    break;
+                }
+                if (strcmp(fn, "realloc") == 0 && e->call.arg_count == 2) {
+                    re0_buffer_write_str(b, "((void*)realloc((void*)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_str(b, ", (size_t)");
+                    c_gen_expr(c, e->call.args[1]);
+                    re0_buffer_write_str(b, "))");
+                    break;
+                }
                 if (strcmp(fn, "mem_copy") == 0 && e->call.arg_count == 3) {
                     re0_buffer_write_str(b, "memcpy((void*)");
                     c_gen_expr(c, e->call.args[0]);

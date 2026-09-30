@@ -1,0 +1,22 @@
+/* Manual allocation primitives (hosted allocator). */
+fn main() {
+    let p: *mut u8 = alloc(8usize) as *mut u8;
+    assert(p != 0);
+    mem_set(p as ptr, 0u8, 8usize);
+    *p = 42u8;
+    assert(*p == 42u8);
+
+    let q: *mut u8 = realloc(p as ptr, 16usize) as *mut u8;
+    assert(q != 0);
+    assert(*q == 42u8);
+    *(q + 15) = 7u8;
+    assert(*(q + 15) == 7u8);
+
+    let z: *mut u8 = alloc_zero(4usize) as *mut u8;
+    assert(z != 0);
+    assert(*z == 0u8);
+    assert(*(z + 3) == 0u8);
+    free(z as ptr);
+
+    free(q as ptr);
+}

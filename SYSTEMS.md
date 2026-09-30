@@ -82,6 +82,15 @@ is planned, see §5).
 Backends that cannot lower a feature emit an explicit compile-time diagnostic;
 they never silently fall back or emit wrong code.
 
+## 4. Manual allocation
+
+`alloc(n) -> ptr`, `alloc_zero(n) -> ptr`, `realloc(p, n) -> ptr`
+and `free(p)` allocate raw memory outside the GC. These are **hosted**
+(malloc/calloc/realloc/free) until the freestanding profile (Milestone C)
+provides a pluggable allocator; a successful allocation may return a null
+pointer and callers must check. Bytes can be initialised with the
+`mem_*` primitives from §2a.
+
 ## 5. Planned (tracked milestones)
 
 - `unsafe` boundary (raw operations gated).

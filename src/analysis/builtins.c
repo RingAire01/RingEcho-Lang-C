@@ -66,6 +66,10 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
     add_builtin(r, "is_alpha", "bool", (const char*[]){"c"}, (const char*[]){"char"}, 1);
     add_builtin(r, "is_alnum", "bool", (const char*[]){"c"}, (const char*[]){"char"}, 1);
     add_builtin(r, "free", "unit", (const char*[]){"value"}, (const char*[]){"ptr"}, 1);
+    /* manual allocation (hosted allocator until the freestanding contract lands) */
+    add_builtin(r, "alloc", "ptr", (const char*[]){"n"}, (const char*[]){"usize"}, 1);
+    add_builtin(r, "alloc_zero", "ptr", (const char*[]){"n"}, (const char*[]){"usize"}, 1);
+    add_builtin(r, "realloc", "ptr", (const char*[]){"p","n"}, (const char*[]){"ptr","usize"}, 2);
     add_builtin(r, "exit", "never", (const char*[]){"code"}, (const char*[]){"i64"}, 1);
     add_builtin(r, "argv_len", "i64", NULL, NULL, 0);
     add_builtin(r, "argv_get", "str", si_s, si_t, 1);
