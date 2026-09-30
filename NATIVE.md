@@ -156,10 +156,28 @@ target/Release/rev build tests/native/basic.reo --backend native \
 - 执行验证由 CI 的 `ubuntu-24.04-arm` 原生 runner 完成；其他宿主只做
   `--emit obj` 与反汇编静态校验，不把跨架构执行伪装为通过。
 
+## armv7 目标
+
+目标 `armv7-unknown-linux-gnueabihf`：自写 ELF32（`EM_ARM`、EABI v5、
+`R_ARM_CALL`），经 `ld -m armelf_linux_eabi` 链接，无 libc：
+
+```bash
+target/Release/rev build tests/native/basic.reo --backend native \
+  --target armv7-unknown-linux-gnueabihf -o /tmp/basic
+```
+
+- 支持的语言子集与 i386/aarch64 一致的整数部分。遵循 AAPCS：r0-r3 传参
+  （64 位值用偶/奇寄存器对，奇数寄存器按规则跳过），其余参数在栈上；
+  返回 r0:r1。栈参数由调用方压栈并在返回后清理，SP 保持 8 字节对齐。
+- 64 位除法使用软件长除（不依赖 ARMv7 整数除扩展）；除零与 `INT64_MIN / -1`
+  显式陷入。浮点明确拒绝。
+- 无原生 armv7 CI runner：由 `ubuntu-24.04`（x64）安装 `qemu-user` 与
+  `arm-linux-gnueabihf` 交叉工具链执行回归；其他环境只做 `--emit obj` 与反汇编。
+
 ## TODO: 后续目标
 
-- x86-64/i386/aarch64 的浮点（`f32`/`f64`）与浮点转换。
-- armv7、macOS（Mach-O）、Windows（COFF + Microsoft ABI）。
-- 聚合值、栈传参（超过寄存器数量的参数）、指针表示与聚合 ABI 分类。
+- 各目标（x86-64/i386/aarch64/armv7）的浮点（`f32`/`f64`）与浮点转换。
+- macOS（Mach-O，x86-64/arm64）、Windows（COFF + Microsoft ABI，x86-64/x86/arm64）。
+- 聚合值、指针表示与聚合 ABI 分类。
 
 完整类型迁移的设计、已完成部分与剩余工作见 [TYPE_SYSTEM.md](TYPE_SYSTEM.md)。
