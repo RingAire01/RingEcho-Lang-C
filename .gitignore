@@ -36,3 +36,7 @@ re0_output.c
 # Python test cache
 __pycache__/
 *.py[cod]
+
+# qemu/crash artifacts
+*.core
+core.*
