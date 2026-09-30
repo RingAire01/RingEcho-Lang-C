@@ -1,0 +1,721 @@
+/* compiler-reo: frontend seed (lexer -> parser -> flat AST -> name
+ * resolution -> initial type checking) for a useful RingEcho subset.
+ *
+ * Design: a flat node table (6 i64 per node) avoids recursive types and host
+ * object identity, which keeps the representation suitable for later
+ * serialization and self-hosting. Names are interned; lists (block statements,
+ * parameters, call arguments) are contiguous ranges in `items`.
+ *
+ * This is one file on purpose while the frontend is small; it will be split
+ * once compiler-reo can compile multiple modules. */
+
+/* ── node kinds ──
+ * 0 Int  1 Ident  2 Unary  3 Binary  4 Call  5 Block  6 Let  7 Return
+ * 8 ExprStmt  9 If  10 Fn  11 Param  14 Tail
+ * types (kind 12 Type): a = type code, b = inner/named
+ */
+static TUnit: i64 = 0;
+static TNever: i64 = 1;
+static TBool: i64 = 2;
+static TI8: i64 = 3;
+static TI16: i64 = 4;
+static TI32: i64 = 5;
+static TI64: i64 = 6;
+static TI128: i64 = 7;
+static TIsize: i64 = 8;
+static TU8: i64 = 9;
+static TU16: i64 = 10;
+static TU32: i64 = 11;
+static TU64: i64 = 12;
+static TU128: i64 = 13;
+static TUsize: i64 = 14;
+static TF32: i64 = 15;
+static TF64: i64 = 16;
+static TChar: i64 = 17;
+static TStr: i64 = 18;
+static TPtr: i64 = 19;
+static TNamed: i64 = 20;
+
+fn set_name(code: i64) -> i64 { return code; }
+
+/* ── diagnostics ── */
+static errors: svec;
+static error_count: i64;
+fn report(message: str) {
+    svec_push(errors, message);
+    error_count += 1;
+}
+
+/* ── token storage ── */
+static tkind: svec;   /* "I" ident, "N" number, "S" symbol */
+static ttext: svec;
+static toff: vec;     /* byte offset */
+static tlen: vec;     /* byte length */
+static pos: i64;
+
+/* ── AST storage ── */
+static nodes: vec;    /* 6 i64 per node */
+static names: svec;
+static items: vec;    /* contiguous child ranges */
+static types: vec;    /* resolved type code per node */
+
+fn is_name_start(c: char) -> bool { return is_alpha(c); }
+fn is_name_part(c: char) -> bool { return is_alpha(c) || is_digit(c); }
+
+fn scan(source: str) {
+    let n: i64 = len(source);
+    let i: i64 = 0;
+    while i < n {
+        let c: char = str_char_at(source, i);
+        if c == ' ' || c == '\n' || c == '\t' {
+            i += 1;
+        } else if is_name_start(c) {
+            let start: i64 = i;
+            while i < n && is_name_part(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(tkind, "I");
+            svec_push(ttext, str_slice(source, start, i));
+            vec_push(toff, start);
+            vec_push(tlen, i - start);
+        } else if is_digit(c) {
+            let start: i64 = i;
+            while i < n && is_digit(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(tkind, "N");
+            svec_push(ttext, str_slice(source, start, i));
+            vec_push(toff, start);
+            vec_push(tlen, i - start);
+        } else {
+            let two: str = if i + 1 < n { str_slice(source, i, i + 2) } else { "" };
+            let width: i64 = if str_eq(two, "==") || str_eq(two, "!=") ||
+                                str_eq(two, "<=") || str_eq(two, ">=") ||
+                                str_eq(two, "->") { 2 } else { 1 };
+            svec_push(tkind, "S");
+            svec_push(ttext, str_slice(source, i, i + width));
+            vec_push(toff, i);
+            vec_push(tlen, width);
+            i += width;
+        }
+    }
+}
+
+fn token_count() -> i64 { return svec_len(tkind); }
+fn tok_kind(i: i64) -> str { return svec_get(tkind, i); }
+fn tok_text(i: i64) -> str { return svec_get(ttext, i); }
+fn at(text: str) -> bool { return pos < token_count() && str_eq(tok_text(pos), text); }
+fn at_ident() -> bool { return pos < token_count() && str_eq(tok_kind(pos), "I"); }
+fn at_number() -> bool { return pos < token_count() && str_eq(tok_kind(pos), "N"); }
+
+fn intern(text: str) -> i64 {
+    let index: i64 = svec_len(names);
+    svec_push(names, text);
+    return index;
+}
+
+fn node(kind: i64, a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {
+    let index: i64 = vec_len(nodes) / 6;
+    vec_push(nodes, kind); vec_push(nodes, a); vec_push(nodes, b);
+    vec_push(nodes, c); vec_push(nodes, d); vec_push(nodes, e);
+    vec_push(types, TUnit);
+    return index;
+}
+fn nkind(i: i64) -> i64 { return vec_get(nodes, i * 6); }
+fn na(i: i64) -> i64 { return vec_get(nodes, i * 6 + 1); }
+fn nb(i: i64) -> i64 { return vec_get(nodes, i * 6 + 2); }
+fn nc(i: i64) -> i64 { return vec_get(nodes, i * 6 + 3); }
+fn nd(i: i64) -> i64 { return vec_get(nodes, i * 6 + 4); }
+fn ne(i: i64) -> i64 { return vec_get(nodes, i * 6 + 5); }
+fn set_type(i: i64, t: i64) { vec_set(types, i, t); }
+
+fn list_push(value: i64) { vec_push(items, value); }
+fn list_at(start: i64, i: i64) -> i64 { return vec_get(items, start + i); }
+
+/* ── type parsing ── */
+fn type_code(text: str) -> i64 {
+    if str_eq(text, "unit") || str_eq(text, "()") { return TUnit; }
+    if str_eq(text, "never") || str_eq(text, "!") { return TNever; }
+    if str_eq(text, "bool") { return TBool; }
+    if str_eq(text, "i8") { return TI8; }
+    if str_eq(text, "i16") { return TI16; }
+    if str_eq(text, "i32") { return TI32; }
+    if str_eq(text, "i64") { return TI64; }
+    if str_eq(text, "i128") { return TI128; }
+    if str_eq(text, "isize") { return TIsize; }
+    if str_eq(text, "u8") { return TU8; }
+    if str_eq(text, "u16") { return TU16; }
+    if str_eq(text, "u32") { return TU32; }
+    if str_eq(text, "u64") { return TU64; }
+    if str_eq(text, "u128") { return TU128; }
+    if str_eq(text, "usize") { return TUsize; }
+    if str_eq(text, "f32") { return TF32; }
+    if str_eq(text, "f64") { return TF64; }
+    if str_eq(text, "char") { return TChar; }
+    if str_eq(text, "str") { return TStr; }
+    if str_eq(text, "ptr") { return TPtr; }
+    return TNamed;
+}
+
+fn parse_type() -> i64 {
+    if at("&") {
+        pos += 1;
+        let m: i64 = 0;
+        if at("mut") { pos += 1; m = 1; }
+        return node(12, TStr, m, -1, -1, -1); /* reference placeholder */
+    }
+    if at("*") {
+        pos += 1;
+        if at("const") { pos += 1; }
+        else if at("mut") { pos += 1; }
+        return node(12, TPtr, -1, -1, -1, -1);
+    }
+    if at("[") {
+        pos += 1;
+        let inner: i64 = parse_type();
+        pos += 1; /* ']' (element or '; N' simplified) */
+        return node(12, TPtr, inner, -1, -1, -1);
+    }
+    if at("fn") {
+        pos += 1;
+        return node(12, TNamed, intern("fn"), -1, -1, -1);
+    }
+    if at("(") {
+        pos += 1;
+        if at(")") { pos += 1; return node(12, TUnit, -1, -1, -1, -1); }
+        pos += 1;
+        return node(12, TUnit, -1, -1, -1, -1);
+    }
+    if at_ident() {
+        let text: str = tok_text(pos);
+        pos += 1;
+        let code: i64 = type_code(text);
+        if code == (TNamed) { return node(12, TNamed, intern(text), -1, -1, -1); }
+        return node(12, code, -1, -1, -1, -1);
+    }
+    return node(12, TNamed, intern("unknown"), -1, -1, -1);
+}
+
+/* ── expressions ── */
+fn precedence_of(op: str) -> i64 {
+    if str_eq(op, "==") || str_eq(op, "!=") || str_eq(op, "<") ||
+       str_eq(op, "<=") || str_eq(op, ">") || str_eq(op, ">=") { return 1; }
+    if str_eq(op, "+") || str_eq(op, "-") { return 2; }
+    if str_eq(op, "*") || str_eq(op, "/") { return 3; }
+    return 0;
+}
+fn opcode(op: str) -> i64 {
+    if str_eq(op, "+") { return 1; }
+    if str_eq(op, "-") { return 2; }
+    if str_eq(op, "*") { return 3; }
+    if str_eq(op, "/") { return 4; }
+    if str_eq(op, "==") { return 6; }
+    if str_eq(op, "!=") { return 7; }
+    if str_eq(op, "<") { return 8; }
+    if str_eq(op, "<=") { return 9; }
+    if str_eq(op, ">") { return 10; }
+    return 11;
+}
+
+fn commit_list(collected: vec, count: i64) -> i64 {
+    let start: i64 = vec_len(items);
+    let j: i64 = 0;
+    while j < count {
+        vec_push(items, vec_get(collected, j));
+        j += 1;
+    }
+    return start;
+}
+
+fn parse_args() -> i64 {
+    pos += 1; /* '(' */
+    let collected: vec = vec_new();
+    let count: i64 = 0;
+    if at(")") {
+        pos += 1;
+        return node(4, -1, vec_len(items), 0, -1, -1);
+    }
+    while true {
+        vec_push(collected, parse_expr(0));
+        count += 1;
+        if at(",") { pos += 1; continue; }
+        break;
+    }
+    pos += 1; /* ')' */
+    let start: i64 = commit_list(collected, count);
+    return node(4, -1, start, count, -1, -1);
+}
+
+fn parse_factor() -> i64 {
+    if at_number() {
+        let value: i64 = str_to_int(tok_text(pos));
+        pos += 1;
+        return node(0, value, -1, -1, -1, -1);
+    }
+    if at_ident() {
+        let name_index: i64 = intern(tok_text(pos));
+        let ident: i64 = node(1, name_index, -1, -1, -1, -1);
+        pos += 1;
+        if at("(") {
+            let call: i64 = parse_args();
+            return node(4, ident, nb(call), nc(call), -1, -1);
+        }
+        return ident;
+    }
+    if at("(") {
+        pos += 1;
+        let inner: i64 = parse_expr(0);
+        pos += 1; /* ')' */
+        return inner;
+    }
+    if at("-") {
+        pos += 1;
+        let operand: i64 = parse_factor();
+        return node(2, 2, operand, -1, -1, -1);
+    }
+    report("expected expression");
+    pos += 1;
+    return node(0, 0, -1, -1, -1, -1);
+}
+
+fn parse_expr(min_precedence: i64) -> i64 {
+    let left: i64 = parse_factor();
+    while pos < token_count() {
+        let op: str = tok_text(pos);
+        let precedence: i64 = precedence_of(op);
+        if precedence == 0 || precedence < min_precedence {
+            return left;
+        }
+        pos += 1;
+        let right: i64 = parse_expr(precedence + 1);
+        left = node(3, opcode(op), left, right, -1, -1);
+    }
+    return left;
+}
+
+/* ── statements and blocks ── */
+fn parse_block() -> i64 {
+    if !at("{") { report("expected '{'"); }
+    pos += 1; /* '{' */
+    let collected: vec = vec_new();
+    let count: i64 = 0;
+    while !at("}") && pos < token_count() {
+        vec_push(collected, parse_stmt());
+        count += 1;
+    }
+    if !at("}") { report("expected '}'"); }
+    pos += 1; /* '}' */
+    let start: i64 = commit_list(collected, count);
+    return node(5, start, count, -1, -1, -1);
+}
+
+fn parse_stmt() -> i64 {
+    if at("let") {
+        pos += 1;
+        let name_index: i64 = intern(tok_text(pos));
+        pos += 1;
+        let type_node: i64 = -1;
+        if at(":") { pos += 1; type_node = parse_type(); }
+        let init: i64 = -1;
+        if at("=") { pos += 1; init = parse_expr(0); }
+        if at(";") { pos += 1; }
+        return node(6, name_index, type_node, init, -1, -1);
+    }
+    if at("return") {
+        pos += 1;
+        let value: i64 = -1;
+        if !at(";") { value = parse_expr(0); }
+        if at(";") { pos += 1; }
+        return node(7, value, -1, -1, -1, -1);
+    }
+    if at("if") {
+        return parse_if();
+    }
+    if at("{") {
+        return node(8, parse_block(), -1, -1, -1, -1);
+    }
+    let expr: i64 = parse_expr(0);
+    if at(";") {
+        pos += 1;
+        return node(8, expr, -1, -1, -1, -1);
+    }
+    /* no semicolon: this is the block's tail expression */
+    return node(14, expr, -1, -1, -1, -1);
+}
+
+fn parse_if() -> i64 {
+    pos += 1; /* 'if' */
+    let cond: i64 = parse_expr(0);
+    let then_block: i64 = parse_block();
+    let else_block: i64 = -1;
+    if at("else") {
+        pos += 1;
+        if at("if") { else_block = parse_if(); }
+        else { else_block = parse_block(); }
+    }
+    return node(9, cond, then_block, else_block, -1, -1);
+}
+
+/* ── declarations ── */
+fn parse_params() -> i64 {
+    pos += 1; /* '(' */
+    let collected: vec = vec_new();
+    let count: i64 = 0;
+    if at(")") {
+        pos += 1;
+        return node(11, vec_len(items), 0, -1, -1, -1);
+    }
+    while true {
+        let name_index: i64 = intern(tok_text(pos));
+        pos += 1;
+        pos += 1; /* ':' */
+        let type_node: i64 = parse_type();
+        vec_push(collected, node(11, name_index, type_node, -1, -1, -1));
+        count += 1;
+        if at(",") { pos += 1; continue; }
+        break;
+    }
+    if !at(")") { report("expected ')' in parameter list"); }
+    pos += 1; /* ')' */
+    let start: i64 = commit_list(collected, count);
+    return node(11, start, count, -1, -1, -1);
+}
+
+fn parse_function() -> i64 {
+    pos += 1; /* 'fn' */
+    let name_index: i64 = intern(tok_text(pos));
+    pos += 1;
+    let params: i64 = parse_params();
+    let ret: i64 = -1;
+    if at("->") { pos += 1; ret = parse_type(); }
+    let body: i64 = parse_block();
+    return node(10, name_index, na(params), nb(params), ret, body);
+}
+
+fn parse_program() -> i64 {
+    let collected: vec = vec_new();
+    let count: i64 = 0;
+    while pos < token_count() {
+        if at("fn") {
+            vec_push(collected, parse_function());
+            count += 1;
+        } else {
+            report("expected function declaration");
+            pos += 1;
+        }
+    }
+    let start: i64 = commit_list(collected, count);
+    return node(5, start, count, -1, -1, -1);
+}
+
+/* ── deterministic AST dump ── */
+fn pad(i: i64) -> str { return to_string(i); }
+fn dump_list(start: i64, count: i64, separator: str) -> str {
+    let result: str = "";
+    let i: i64 = 0;
+    while i < count {
+        if i > 0 { result = str_concat(result, separator); }
+        result = str_concat(result, dump(list_at(start, i)));
+        i += 1;
+    }
+    return result;
+}
+fn dump_type(t: i64) -> str {
+    if t < 0 { return "unit"; }
+    let code: i64 = na(t);
+    if code == (TUnit) { return "unit"; }
+    if code == (TBool) { return "bool"; }
+    if code == (TI8) { return "i8"; }
+    if code == (TI16) { return "i16"; }
+    if code == (TI32) { return "i32"; }
+    if code == (TI64) { return "i64"; }
+    if code == (TIsize) { return "isize"; }
+    if code == (TU8) { return "u8"; }
+    if code == (TU16) { return "u16"; }
+    if code == (TU32) { return "u32"; }
+    if code == (TU64) { return "u64"; }
+    if code == (TUsize) { return "usize"; }
+    if code == (TF32) { return "f32"; }
+    if code == (TF64) { return "f64"; }
+    if code == (TChar) { return "char"; }
+    if code == (TStr) { return "str"; }
+    if code == (TPtr) { return "ptr"; }
+    if code == (TNever) { return "never"; }
+    return svec_get(names, nb(t));
+}
+fn dump(n: i64) -> str {
+    let kind: i64 = nkind(n);
+    if kind == 0 { return to_string(na(n)); }
+    if kind == 1 { return svec_get(names, na(n)); }
+    if kind == 2 { return str_concat("(neg ", str_concat(dump(nb(n)), ")")); }
+    if kind == 3 {
+        return str_concat("(", str_concat(op_name(na(n)),
+               str_concat(" ", str_concat(dump(nb(n)),
+               str_concat(" ", str_concat(dump(nc(n)), ")"))))));
+    }
+    if kind == 4 {
+        return str_concat("(call ", str_concat(dump(na(n)),
+               str_concat(" [", str_concat(dump_list(nb(n), nc(n), " "), "])"))));
+    }
+    if kind == 5 { return str_concat("(block ", str_concat(dump_list(na(n), nb(n), " "), ")")); }
+    if kind == 6 {
+        let header: str = str_concat("(let ", svec_get(names, na(n)));
+        let typed: str = if nb(n) < 0 { header } else { str_concat(header, str_concat(": ", dump_type(nb(n)))) };
+        let inited: str = if nc(n) < 0 { typed } else { str_concat(typed, str_concat(" = ", dump(nc(n)))) };
+        return str_concat(inited, ")");
+    }
+    if kind == 7 {
+        if na(n) < 0 { return "(return)"; }
+        return str_concat("(return ", str_concat(dump(na(n)), ")"));
+    }
+    if kind == 8 { return str_concat("(stmt ", str_concat(dump(na(n)), ")")); }
+    if kind == 9 {
+        let base: str = str_concat("(if ", str_concat(dump(na(n)), str_concat(" ", str_concat(dump(nb(n)), ""))));
+        if nc(n) < 0 { return str_concat(base, ")"); }
+        return str_concat(base, str_concat(" ", str_concat(dump(nc(n)), ")")));
+    }
+    if kind == 10 {
+        let head: str = str_concat("(fn ", svec_get(names, na(n)));
+        let pars: str = str_concat(head, str_concat(" (", str_concat(dump_list(nb(n), nc(n), " "), ")")));
+        return str_concat(pars, str_concat(" -> ", str_concat(dump_type(nd(n)),
+               str_concat(" ", str_concat(dump(ne(n)), ")")))));
+    }
+    if kind == 11 {
+        return str_concat(svec_get(names, na(n)),
+               str_concat(": ", dump_type(nb(n))));
+    }
+    if kind == 14 { return str_concat("(tail ", str_concat(dump(na(n)), ")")); }
+    return "?";
+}
+fn op_name(code: i64) -> str {
+    if code == 1 { return "+"; }
+    if code == 2 { return "-"; }
+    if code == 3 { return "*"; }
+    if code == 4 { return "/"; }
+    if code == 6 { return "=="; }
+    if code == 7 { return "!="; }
+    if code == 8 { return "<"; }
+    if code == 9 { return "<="; }
+    if code == 10 { return ">"; }
+    return ">=";
+}
+
+/* ── name resolution (stable ids; no pointer identity) ──
+ * symbols: name + kind (0 fn, 1 param, 2 local). Scopes are not nested beyond
+ * function scope for this slice; a function's parameters and locals share a
+ * namespace, and top-level functions are visible everywhere. */
+static sym_name: svec;
+static sym_kind: vec;
+fn declare(name: str, kind: i64) {
+    let i: i64 = 0;
+    while i < svec_len(sym_name) {
+        if str_eq(svec_get(sym_name, i), name) && vec_get(sym_kind, i) == kind {
+            report(str_concat("duplicate declaration: ", name));
+            return;
+        }
+        i += 1;
+    }
+    svec_push(sym_name, name);
+    vec_push(sym_kind, kind);
+}
+fn declared(name: str) -> bool {
+    let i: i64 = 0;
+    while i < svec_len(sym_name) {
+        if str_eq(svec_get(sym_name, i), name) { return true; }
+        i += 1;
+    }
+    return false;
+}
+
+fn resolve_expr(n: i64) {
+    let kind: i64 = nkind(n);
+    if kind == 1 {
+        if !declared(svec_get(names, na(n))) {
+            report(str_concat("unresolved name: ", svec_get(names, na(n))));
+        }
+    } else if kind == 2 {
+        resolve_expr(nb(n));
+    } else if kind == 3 {
+        resolve_expr(nb(n)); resolve_expr(nc(n));
+    } else if kind == 4 {
+        if !declared(svec_get(names, na(na(n)))) {
+            report(str_concat("unresolved function: ", svec_get(names, na(na(n)))));
+        }
+        let i: i64 = 0;
+        while i < nc(n) { resolve_expr(list_at(nb(n), i)); i += 1; }
+    }
+}
+fn resolve_block(n: i64) {
+    let i: i64 = 0;
+    while i < nb(n) { resolve_stmt(list_at(na(n), i)); i += 1; }
+}
+fn resolve_stmt(n: i64) {
+    let kind: i64 = nkind(n);
+    if kind == 6 {
+        if nc(n) >= 0 { resolve_expr(nc(n)); }
+        declare(svec_get(names, na(n)), 2);
+    } else if kind == 7 {
+        if na(n) >= 0 { resolve_expr(na(n)); }
+    } else if kind == 8 {
+        resolve_expr(na(n));
+    } else if kind == 9 {
+        resolve_expr(na(n)); resolve_block(nb(n));
+        if nc(n) >= 0 { resolve_stmt(nc(n)); }
+    } else if kind == 14 {
+        resolve_expr(na(n));
+    }
+}
+fn resolve_program(program: i64) {
+    let i: i64 = 0;
+    while i < nb(program) {
+        let fn_node: i64 = list_at(na(program), i);
+        declare(svec_get(names, na(fn_node)), 0);
+        i += 1;
+    }
+    i = 0;
+    while i < nb(program) {
+        let fn_node: i64 = list_at(na(program), i);
+        let p: i64 = 0;
+        while p < nc(fn_node) {
+            let param: i64 = list_at(nb(fn_node), p);
+            declare(svec_get(names, na(param)), 1);
+            p += 1;
+        }
+        resolve_block(ne(fn_node));
+        i += 1;
+    }
+}
+
+/* ── initial type checking ── */
+fn numeric(code: i64) -> bool { return code >= TI8 && code <= TUsize; }
+fn type_expr(n: i64) -> i64 {
+    let kind: i64 = nkind(n);
+    if kind == 0 { set_type(n, TI64); return TI64; }
+    if kind == 1 {
+        let i: i64 = 0;
+        while i < svec_len(sym_name) {
+            if str_eq(svec_get(sym_name, i), svec_get(names, na(n))) {
+                let t: i64 = if vec_get(sym_kind, i) == 0 { TI64 } else { TI64 };
+                set_type(n, t); return t;
+            }
+            i += 1;
+        }
+        set_type(n, TI64); return TI64;
+    }
+    if kind == 2 {
+        let t: i64 = type_expr(nb(n)); set_type(n, t); return t;
+    }
+    if kind == 3 {
+        let op: i64 = na(n);
+        let lt: i64 = type_expr(nb(n));
+        let rt: i64 = type_expr(nc(n));
+        if op >= 6 { set_type(n, TBool); return TBool; }
+        let t: i64 = if numeric(lt) && numeric(rt) { lt } else { lt };
+        set_type(n, t); return t;
+    }
+    if kind == 4 {
+        set_type(n, TI64); return TI64;
+    }
+    set_type(n, TUnit); return TUnit;
+}
+fn check_stmt(n: i64, ret: i64) {
+    let kind: i64 = nkind(n);
+    if kind == 6 {
+        if nb(n) >= 0 {
+            let want: i64 = na(nb(n));
+            if nc(n) >= 0 {
+                let got: i64 = type_expr(nc(n));
+                if want != got && !(numeric(want) && numeric(got)) {
+                    report("let initializer type mismatch");
+                }
+            }
+        } else if nc(n) >= 0 {
+            type_expr(nc(n));
+        }
+    } else if kind == 7 {
+        if na(n) >= 0 { type_expr(na(n)); }
+    } else if kind == 8 {
+        type_expr(na(n));
+    } else if kind == 9 {
+        let ct: i64 = type_expr(na(n));
+        if ct != TBool && ct != (TUnit) { report("if condition must be bool"); }
+        check_block(nb(n), ret);
+        if nc(n) >= 0 { check_stmt(nc(n), ret); }
+    } else if kind == 14 {
+        type_expr(na(n));
+    }
+}
+fn check_block(n: i64, ret: i64) {
+    let i: i64 = 0;
+    while i < nb(n) { check_stmt(list_at(na(n), i), ret); i += 1; }
+}
+fn check_program(program: i64) {
+    let i: i64 = 0;
+    while i < nb(program) {
+        let fn_node: i64 = list_at(na(program), i);
+        let ret: i64 = if nd(fn_node) < 0 { TUnit } else { na(nd(fn_node)) };
+        check_block(ne(fn_node), ret);
+        i += 1;
+    }
+}
+
+/* ── driver ── */
+static source: str;
+fn reset() {
+    tkind = svec_new(); ttext = svec_new(); toff = vec_new(); tlen = vec_new();
+    nodes = vec_new(); names = svec_new(); items = vec_new(); types = vec_new();
+    errors = svec_new(); sym_name = svec_new(); sym_kind = vec_new();
+    error_count = 0; pos = 0;
+}
+fn analyze(text: str) -> i64 {
+    reset();
+    source = text; scan(text);
+    let program: i64 = parse_program();
+    resolve_program(program);
+    check_program(program);
+    return program;
+}
+fn dump_program(program: i64) -> str { return dump(program); }
+fn error_text() -> str {
+    let result: str = "";
+    let i: i64 = 0;
+    while i < svec_len(errors) {
+        if i > 0 { result = str_concat(result, ";"); }
+        result = str_concat(result, svec_get(errors, i));
+        i += 1;
+    }
+    return result;
+}
+fn token_span(i: i64) -> i64 { return vec_get(toff, i); }
+
+fn main() {
+    let calc: str =
+        "fn calc(x: i32) -> i32 {\n" +
+        "    let y = 1 + 2 * 3;\n" +
+        "    if x > y {\n" +
+        "        return x;\n" +
+        "    }\n" +
+        "    y\n" +
+        "}\n";
+    let program: i64 = analyze(calc);
+    assert(error_count == 0);
+    assert(dump_program(program) ==
+        "(block (fn calc (x: i32) -> i32 (block (let y = (+ 1 (* 2 3))) (if (> x y) (block (return x))) (tail y))))");
+
+    /* multiple functions and a call */
+    let two: str =
+        "fn add(a: i32, b: i32) -> i32 { return a + b; }\n" +
+        "fn main() -> i32 { return add(1, 2); }\n";
+    let p2: i64 = analyze(two);
+    assert(error_count == 0);
+
+    /* diagnostics: unresolved name and duplicate parameter */
+    analyze("fn f() -> i32 { return missing; }\n");
+    assert(error_count > 0);
+    analyze("fn g(a: i32, a: i32) -> i32 { return a; }\n");
+    assert(error_count > 0);
+
+    /* malformed input must fail cleanly and deterministically */
+    analyze("fn broken(x: i32 -> i32 {");
+    assert(error_count > 0);
+}

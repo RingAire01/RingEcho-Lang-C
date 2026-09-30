@@ -289,3 +289,4 @@ test-selfhost: $(TARGET_REV)
 	"./$(TARGET_REV)" run compiler-reo/lexer.reo
 	"./$(TARGET_REV)" run compiler-reo/parser.reo
 	"./$(TARGET_REV)" run compiler-reo/expr.reo
+	"./$(TARGET_REV)" run compiler-reo/frontend.reo
