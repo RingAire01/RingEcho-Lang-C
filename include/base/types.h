@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "base/target.h"
 typedef enum {
     RE0_TYPE_I8, RE0_TYPE_I16, RE0_TYPE_I32, RE0_TYPE_I64, RE0_TYPE_I128, RE0_TYPE_ISIZE,
     RE0_TYPE_U8, RE0_TYPE_U16, RE0_TYPE_U32, RE0_TYPE_U64, RE0_TYPE_U128, RE0_TYPE_USIZE,
@@ -44,7 +45,9 @@ bool        re0_type_is_integer(Re0TypeKind k);
 bool        re0_type_is_float(Re0TypeKind k);
 bool        re0_type_is_numeric(Re0TypeKind k);
 bool        re0_type_is_signed(Re0TypeKind k);
-size_t      re0_type_sizeof(Re0TypeKind k);
+size_t      re0_type_sizeof(Re0TypeKind k);          /* host layout */
+size_t      re0_type_sizeof_on(const Re0TargetLayout *t, Re0TypeKind k);
+size_t      re0_type_sizeof_full_on(const Re0TargetLayout *t, const Re0Type *ty);
 /* Recursively compute the full type size (composite types: Array=elem×n, Slice=16,
  * Vec=24, Tuple=Σ). Struct/Enum/Fn/Generic need model layout info; conservatively
  * return 0. */

@@ -44,6 +44,17 @@ C 后端的旧数组指针表示、统一宽槽数组、整数化引用和整数
 - 函数指针间接调用只求值一次并检查空指针。Lambda 仍不支持捕获环境。
 - 泛型函数和 Lambda 分批收集依赖后生成原型，保留具体签名，不修改原始 AST。
 
+## 目标模型
+
+`include/base/target.h` / `src/base/target.c` 定义共享的机器模型
+`Re0TargetLayout`（指针宽度/对齐、int128 对齐、栈对齐、对象上限、端序），
+是类型系统、语义分析与布局服务的唯一来源。`re0_type_sizeof_on` /
+`re0_type_sizeof_full_on` 按目标计算 `isize`/`usize`、指针与
+切片/容器等指针派生类型的大小；`re0_type_sizeof`（无目标参数）使用宿主布局。
+语义分析通过 `re0_sema_set_target` 使用当前编译目标，编译 native 目标时
+由 CLI 选择的三元组映射到对应布局。已提供 x86_64 / x86 / aarch64 / arm
+四个实例，`isize`/`usize` 不再固定 8 字节。
+
 ## 布局服务
 
 `include/analysis/layout.h` / `src/analysis/layout.c` 提供编译任务级

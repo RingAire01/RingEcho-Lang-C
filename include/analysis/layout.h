@@ -3,16 +3,14 @@
 #include "analysis/model.h"
 #include "front/ast.h"
 #include "base/error.h"
+#include "base/target.h"
 
 /* System-layout contract. This manager owns all returned nodes until destroy;
  * model/AST inputs are borrowed and must outlive a query. No global state. */
 enum { RE0_LAYOUT_MAX_DEPTH = 128, RE0_LAYOUT_MAX_NODES = 16384,
        RE0_LAYOUT_MAX_FIELDS = 1024, RE0_LAYOUT_MAX_TYPE_TEXT = 65536 };
-typedef struct {
-    unsigned pointer_size, pointer_align, int128_align;
-    size_t max_object_size;
-} Re0TargetLayout;
-extern const Re0TargetLayout re0_target_x86_64_sysv;
+/* Re0TargetLayout is defined in base/target.h and shared with the type system
+ * and semantic analysis. */
 
 typedef struct Re0Layout Re0Layout;
 typedef struct { const char *name; size_t offset; Re0Layout *type; } Re0LayoutField;

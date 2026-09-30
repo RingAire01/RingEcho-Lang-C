@@ -59,43 +59,54 @@ bool re0_type_is_signed(Re0TypeKind k) {
     return k >= RE0_TYPE_I8 && k <= RE0_TYPE_ISIZE;
 }
 
-size_t re0_type_sizeof(Re0TypeKind k) {
+size_t re0_type_sizeof_on(const Re0TargetLayout *t, Re0TypeKind k) {
+    if (!t) t = re0_target_layout_host();
     switch (k) {
         case RE0_TYPE_I8: case RE0_TYPE_U8: return 1;
         case RE0_TYPE_I16: case RE0_TYPE_U16: return 2;
         case RE0_TYPE_I32: case RE0_TYPE_U32: return 4;
-        case RE0_TYPE_I64: case RE0_TYPE_U64: case RE0_TYPE_ISIZE: case RE0_TYPE_USIZE: return 8;
+        case RE0_TYPE_I64: case RE0_TYPE_U64: return 8;
+        case RE0_TYPE_ISIZE: case RE0_TYPE_USIZE: return t->pointer_size;
         case RE0_TYPE_I128: case RE0_TYPE_U128: return 16;
         case RE0_TYPE_F32: return 4;
         case RE0_TYPE_F64: return 8;
         case RE0_TYPE_BOOL: case RE0_TYPE_CHAR: return 1;
-        case RE0_TYPE_STR: case RE0_TYPE_PTR: return 8;
-        default: return 8;
+        case RE0_TYPE_STR: case RE0_TYPE_PTR: return t->pointer_size;
+        default: return t->pointer_size;
     }
 }
 
-size_t re0_type_sizeof_full(const Re0Type *t) {
+size_t re0_type_sizeof(Re0TypeKind k) {
+    return re0_type_sizeof_on(re0_target_layout_host(), k);
+}
+
+size_t re0_type_sizeof_full_on(const Re0TargetLayout *layout, const Re0Type *t) {
     if (!t) return 0;
+    if (!layout) layout = re0_target_layout_host();
     switch (t->kind) {
         case RE0_TYPE_ARRAY:
             return t->array.inner
-                ? re0_type_sizeof_full(t->array.inner) * t->array.size : 0;
-        case RE0_TYPE_SLICE: return 16;   /* ptr + len */
-        case RE0_TYPE_VEC:   return 24;   /* ptr + len + cap */
+                ? re0_type_sizeof_full_on(layout, t->array.inner) * t->array.size : 0;
+        case RE0_TYPE_SLICE: return (size_t)2 * layout->pointer_size; /* ptr + len */
+        case RE0_TYPE_VEC:   return (size_t)3 * layout->pointer_size; /* ptr + len + cap */
         case RE0_TYPE_TUPLE: {
             size_t sum = 0;
             for (int i = 0; i < t->tuple.count; i++)
-                sum += re0_type_sizeof_full(t->tuple.elems[i]);
+                sum += re0_type_sizeof_full_on(layout, t->tuple.elems[i]);
             return sum;
         }
-        case RE0_TYPE_REFERENCE: return 8;
-        case RE0_TYPE_TYPEVAR:   return 8;
+        case RE0_TYPE_REFERENCE: return layout->pointer_size;
+        case RE0_TYPE_TYPEVAR:   return layout->pointer_size;
         case RE0_TYPE_STRUCT: case RE0_TYPE_ENUM: case RE0_TYPE_FN:
         case RE0_TYPE_GENERIC: case RE0_TYPE_UNKNOWN:
             return 0;   /* requires model layout info */
         default:
-            return re0_type_sizeof(t->kind);
+            return re0_type_sizeof_on(layout, t->kind);
     }
+}
+
+size_t re0_type_sizeof_full(const Re0Type *t) {
+    return re0_type_sizeof_full_on(re0_target_layout_host(), t);
 }
 
 Re0Type *re0_type_make(Re0TypeKind k, void *arena) {

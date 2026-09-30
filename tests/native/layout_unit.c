@@ -117,12 +117,43 @@ static bool rejection_cases(void) {
     return true;
 }
 
+/* Machine-sized integers and pointer-derived composites must follow the
+ * selected target, not a fixed 64-bit assumption. */
+static bool target_widths(void) {
+    const Re0TargetLayout *x64 = &re0_target_x86_64_sysv;
+    const Re0TargetLayout *x86 = &re0_target_x86_sysv;
+    const Re0TargetLayout *a64 = &re0_target_aarch64_lp64;
+    const Re0TargetLayout *arm = &re0_target_arm_aapcs;
+    REQUIRE(re0_type_sizeof_on(x64, RE0_TYPE_USIZE) == 8);
+    REQUIRE(re0_type_sizeof_on(x64, RE0_TYPE_ISIZE) == 8);
+    REQUIRE(re0_type_sizeof_on(x86, RE0_TYPE_USIZE) == 4);
+    REQUIRE(re0_type_sizeof_on(x86, RE0_TYPE_ISIZE) == 4);
+    REQUIRE(re0_type_sizeof_on(a64, RE0_TYPE_USIZE) == 8);
+    REQUIRE(re0_type_sizeof_on(arm, RE0_TYPE_ISIZE) == 4);
+    REQUIRE(re0_type_sizeof_on(x86, RE0_TYPE_U64) == 8);
+    REQUIRE(re0_type_sizeof_on(x86, RE0_TYPE_PTR) == 4);
+    REQUIRE(re0_type_sizeof_on(x86, RE0_TYPE_STR) == 4);
+    REQUIRE(re0_type_sizeof_on(x86, RE0_TYPE_I128) == 16);
+    REQUIRE(x86->pointer_align == 4 && x64->pointer_align == 8);
+    REQUIRE(arm->stack_align == 8 && x64->stack_align == 16);
+    REQUIRE(!x64->big_endian);
+    Re0Type *slice = re0_type_make_slice(re0_type_make(RE0_TYPE_U8, NULL), NULL);
+    REQUIRE(re0_type_sizeof_full_on(x86, slice) == 8);
+    REQUIRE(re0_type_sizeof_full_on(x64, slice) == 16);
+    re0_type_free_tree(slice);
+    REQUIRE(re0_target_layout_host() != NULL);
+    REQUIRE(re0_target_layout_find("aarch64") == a64);
+    REQUIRE(re0_target_layout_find("i686") == x86);
+    REQUIRE(re0_target_layout_find("nope") == NULL);
+    return true;
+}
+
 int main(void) {
     Re0LayoutManager m;
     if (!re0_layout_init(&m, &re0_target_x86_64_sysv, NULL, &declarations, NULL)) return 1;
     bool ok = primitives(&m) && c_layout_and_abi(&m);
     re0_layout_destroy(&m);
-    if (!ok || !rejection_cases()) return 1;
+    if (!ok || !rejection_cases() || !target_widths()) return 1;
     puts("system type layouts and SysV classification passed");
     return 0;
 }

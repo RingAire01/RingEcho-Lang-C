@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdio.h>
 
-const Re0TargetLayout re0_target_x86_64_sysv = {8, 8, 16, PTRDIFF_MAX};
 typedef struct Binding {
     char **names;
     Re0Type **args;

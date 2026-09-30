@@ -6,6 +6,7 @@
 #include "analysis/scope.h"
 #include "analysis/model.h"
 #include "analysis/builtins.h"
+#include "base/target.h"
 
 typedef struct Re0ScopeVec {
     Re0Scope **data;
@@ -31,6 +32,10 @@ typedef struct {
      * released together at destroy time (see re0_type_free). Types may be
      * shared, so this list deduplicates by pointer. */
     Re0TypeVec         owned_types;
+    /* Machine model used for literal range checks and pointer-width semantics.
+     * Defaults to the host; the compiler overrides it with the selected
+     * target before checking. */
+    const Re0TargetLayout *target;
     bool               supports_conversions; /* Target capability, checked before lowering. */
     bool               had_error;
     int                infer_depth;
@@ -42,6 +47,8 @@ typedef struct {
 
 void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
                    Re0SemanticModel *model, Re0BuiltinRegistry *builtins);
+/* Select the machine model used for width-sensitive checks. NULL -> host. */
+void re0_sema_set_target(Re0Sema *s, const Re0TargetLayout *target);
 bool re0_sema_check(Re0Sema *s, Re0StmtVec *stmts);
 void re0_sema_destroy(Re0Sema *s);
 

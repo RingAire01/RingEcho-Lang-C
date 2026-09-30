@@ -50,10 +50,11 @@ static bool sema_assignable(Re0Type *from, Re0Type *to) {
     return re0_type_coercible(from, to); /* equal or numeric conversion */
 }
 
-static bool sema_assignable_expr(Re0Type *from, Re0Type *to, Re0Expr *expr) {
+static bool sema_assignable_expr(Re0Sema *s, Re0Type *from, Re0Type *to, Re0Expr *expr) {
     if (expr && to && expr->kind == EXPR_INT && !expr->int_lit.suffix &&
         re0_type_is_integer(to->kind))
-        return re0_integer_fits(expr->int_lit.integer, (unsigned)re0_type_sizeof(to->kind) * 8,
+        return re0_integer_fits(expr->int_lit.integer,
+                               (unsigned)re0_type_sizeof_on(s->target, to->kind) * 8,
                                re0_type_is_signed(to->kind));
     if (expr && to && expr->kind == EXPR_FLOAT && !expr->float_lit.suffix &&
         to->kind == RE0_TYPE_F32) {
@@ -184,11 +185,16 @@ static Re0Type *call_result_type(Re0Sema *s,Re0Type *ret,Re0Type *fn,Re0Expr *ca
     return ret;
 }
 
+void re0_sema_set_target(Re0Sema *s, const Re0TargetLayout *target) {
+    if (s) s->target = target ? target : re0_target_layout_host();
+}
+
 void re0_sema_init(Re0Sema *s, Re0Arena *arena, Re0ErrorList *errors,
                    Re0SemanticModel *model, Re0BuiltinRegistry *builtins) {
     s->arena = arena; s->errors = errors; s->model = model; s->builtins = builtins;
     s->global_scope = re0_scope_new(NULL); s->current_scope = s->global_scope;
     Re0StmtVec_init(&s->checked); s->had_error = false; s->infer_depth = 0; s->statement_depth=0;
+    s->target = re0_target_layout_host();
     s->supports_conversions = true;
     s->current_fn_return = NULL;
     s->loop_depth = 0; s->fn_depth = 0;
@@ -406,7 +412,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
             if (e->int_lit.suffix) {
                 Re0Type *st = re0_type_parse(e->int_lit.suffix);
                 if (st && re0_type_is_integer(st->kind)) {
-                    if (!re0_integer_fits(e->int_lit.integer, (unsigned)re0_type_sizeof(st->kind) * 8,
+                    if (!re0_integer_fits(e->int_lit.integer, (unsigned)re0_type_sizeof_on(s->target, st->kind) * 8,
                                           re0_type_is_signed(st->kind))) {
                         re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
                                          "integer literal is outside the range of %s", e->int_lit.suffix);
@@ -487,7 +493,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         bool l_lit = e->binary.left && e->binary.left->kind == EXPR_INT;
                         bool r_lit = e->binary.right && e->binary.right->kind == EXPR_INT;
                         if (l_lit && r_lit && lt && rt)
-                            return re0_type_sizeof(lt->kind) >= re0_type_sizeof(rt->kind) ? lt : rt;
+                            return re0_type_sizeof_on(s->target, lt->kind) >= re0_type_sizeof_on(s->target, rt->kind) ? lt : rt;
                         if (l_lit && rt) return rt;
                         if (r_lit && lt) return lt;
                     }
@@ -497,7 +503,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         if (re0_type_is_float(lt->kind)) return lt;
                         if (re0_type_is_float(rt->kind)) return rt;
                         /* both integer: prefer the wider of the two */
-                        if (re0_type_sizeof(lt->kind) >= re0_type_sizeof(rt->kind))
+                        if (re0_type_sizeof_on(s->target, lt->kind) >= re0_type_sizeof_on(s->target, rt->kind))
                             return lt;
                         return rt;
                     }
@@ -602,7 +608,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         if(value->borrows_local) {
                             re0_error_append(s->errors,RE0_ERR_SEMANTIC,value->span,NULL,"local borrow cannot escape into a dynamic container");s->had_error=true;
                         }
-                        if(!sema_assignable_expr(value->resolved_type,v->vec.inner,value)) {
+                        if(!sema_assignable_expr(s, value->resolved_type,v->vec.inner,value)) {
                             re0_error_append(s->errors,RE0_ERR_SEMANTIC,value->span,NULL,"vector element type mismatch"); s->had_error=true;
                         }
                     }
@@ -634,7 +640,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         re0_error_append(s->errors,RE0_ERR_SEMANTIC,e->span,NULL,"function pointer argument count mismatch");s->had_error=true;
                     }
                     for(int i=0;i<e->call.arg_count && i<selected->func.param_count;i++)
-                        if(!sema_assignable_expr(e->call.args[i]->resolved_type,selected->func.params[i],e->call.args[i])) {
+                        if(!sema_assignable_expr(s, e->call.args[i]->resolved_type,selected->func.params[i],e->call.args[i])) {
                             re0_error_append(s->errors,RE0_ERR_SEMANTIC,e->span,NULL,"function pointer argument type mismatch");s->had_error=true;
                         }
                     return selected->func.ret;
@@ -676,7 +682,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                                     for (int ai = 0; ai < argc && ai < expected; ai++) {
                                         Re0Type *want = resolve_type(s, ed->variant_types[tag][ai]);
                                         Re0Type *got = infer_type(s, e->call.args[ai]);
-                                        if (!want || !sema_assignable_expr(got, want, e->call.args[ai])) {
+                                        if (!want || !sema_assignable_expr(s, got, want, e->call.args[ai])) {
                                             re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->call.args[ai]->span, NULL,
                                                              "enum payload type mismatch for '%s::%s' argument %d",
                                                              enum_name, variant_name, ai + 1);
@@ -685,7 +691,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                                     }
                                 } else if(has_payload) {
                                     Re0Type integer={.kind=RE0_TYPE_I64};
-                                    for(int ai=0;ai<argc;ai++) if(!sema_assignable_expr(e->call.args[ai]->resolved_type,&integer,e->call.args[ai])) {
+                                    for(int ai=0;ai<argc;ai++) if(!sema_assignable_expr(s, e->call.args[ai]->resolved_type,&integer,e->call.args[ai])) {
                                         re0_error_append(s->errors,RE0_ERR_SEMANTIC,e->span,NULL,"non-generic Option/Result payload must be i64");s->had_error=true;
                                     }
                                 }
@@ -727,7 +733,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                                     ai < sym->type->func.param_count; ai++) {
                         Re0Type *at = infer_type(s, e->call.args[ai]);
                         Re0Type *pt = re0_sema_own_type(s,call_result_type(s,sym->type->func.params[ai],sym->type,e,0));
-                        if (at && pt && !sema_assignable_expr(at, pt, e->call.args[ai])) {
+                        if (at && pt && !sema_assignable_expr(s, at, pt, e->call.args[ai])) {
                             re0_error_append(s->errors, RE0_ERR_SEMANTIC,
                                              e->call.callee->span, NULL,
                                              "argument %d of '%s': expected '%s', got '%s'",
@@ -753,7 +759,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                     re0_error_append(s->errors,RE0_ERR_SEMANTIC,e->span,NULL,"function value argument count mismatch");s->had_error=true;
                 }
                 for(int i=0;i<e->call.arg_count && i<callee->func.param_count;i++)
-                    if(!sema_assignable_expr(e->call.args[i]->resolved_type,callee->func.params[i],e->call.args[i])) {
+                    if(!sema_assignable_expr(s, e->call.args[i]->resolved_type,callee->func.params[i],e->call.args[i])) {
                         re0_error_append(s->errors,RE0_ERR_SEMANTIC,e->span,NULL,"function value argument type mismatch");s->had_error=true;
                     }
                 return callee->func.ret;
@@ -766,7 +772,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
             Re0Type *then_type = infer_type(s, e->if_expr.then);
             if (!e->if_expr.else_) return re0_type_make(RE0_TYPE_UNIT, NULL);
             Re0Type *other=infer_type(s, e->if_expr.else_);
-            if(!sema_assignable_expr(other,then_type,e->if_expr.else_)) {
+            if(!sema_assignable_expr(s, other,then_type,e->if_expr.else_)) {
                 re0_error_append(s->errors,RE0_ERR_SEMANTIC,e->span,NULL,"if expression branches have incompatible types");s->had_error=true;
             }
             return then_type;
@@ -793,7 +799,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                         found = 1;
                         Re0Type *ft = sd->fields[j].type;
                         if (vt && ft && vt->kind != RE0_TYPE_UNKNOWN &&
-                            ft->kind != RE0_TYPE_UNKNOWN && !sema_assignable_expr(vt, ft, val)) {
+                            ft->kind != RE0_TYPE_UNKNOWN && !sema_assignable_expr(s, vt, ft, val)) {
                             re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
                                 "field '%s' of struct '%s': expected '%s', got '%s'",
                                 fn, e->struct_init.name,
@@ -843,7 +849,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                     Re0Type *pattern_type = infer_type(s, pattern);
                     if (subject && pattern_type && subject->kind != RE0_TYPE_UNKNOWN &&
                         pattern_type->kind != RE0_TYPE_UNKNOWN &&
-                        !sema_assignable_expr(pattern_type, subject, pattern)) {
+                        !sema_assignable_expr(s, pattern_type, subject, pattern)) {
                         re0_error_append(s->errors, RE0_ERR_SEMANTIC, pattern->span, NULL,
                                          "match pattern type does not match scrutinee");
                         s->had_error = true;
@@ -853,7 +859,7 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                 if (!first) first = arm_type;
                 else if (arm_type && first->kind != RE0_TYPE_UNKNOWN &&
                          arm_type->kind != RE0_TYPE_UNKNOWN &&
-                         !sema_assignable_expr(arm_type, first, e->match_.arms[i].body)) {
+                         !sema_assignable_expr(s, arm_type, first, e->match_.arms[i].body)) {
                     re0_error_append(s->errors, RE0_ERR_SEMANTIC,
                                      e->match_.arms[i].body->span, NULL,
                                      "match arm type does not match first arm");
@@ -1106,7 +1112,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
             }
             Re0Type *init_ty = stmt->let_stmt.init ? infer_type(s, stmt->let_stmt.init) : NULL;
             /* B1: annotation vs initializer type checking */
-            if (anno && init_ty && !sema_assignable_expr(init_ty, anno, stmt->let_stmt.init)) {
+            if (anno && init_ty && !sema_assignable_expr(s, init_ty, anno, stmt->let_stmt.init)) {
                 re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
                                 "type mismatch: '%s' annotated '%s' but initializer is '%s'",
                                 stmt->let_stmt.name, re0_type_kind_name(anno->kind),
@@ -1132,7 +1138,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
                 Re0Type *vt = infer_type(s, stmt->assign.value);
                 if(sym) sym->borrows_local=sym->borrows_local || stmt->assign.value->borrows_local;
                 /* B2: assignment type checking */
-                if (sym && sym->type && vt && !sema_assignable_expr(vt, sym->type, stmt->assign.value)) {
+                if (sym && sym->type && vt && !sema_assignable_expr(s, vt, sym->type, stmt->assign.value)) {
                     re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
                                     "assignment type mismatch: '%s' is '%s', got '%s'",
                                     stmt->assign.name, re0_type_kind_name(sym->type->kind),
@@ -1154,7 +1160,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
             if(!writable_place(s,&selection)) {
                 re0_error_append(s->errors,RE0_ERR_SEMANTIC,stmt->span,NULL,"cannot write through an immutable reference");s->had_error=true;
             }
-            if (!sema_assignable_expr(value, target, stmt->field_assign.value)) {
+            if (!sema_assignable_expr(s, value, target, stmt->field_assign.value)) {
                 re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL, "field assignment type mismatch; use an explicit conversion");
                 s->had_error = true;
             }
@@ -1172,7 +1178,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
             if(!writable_place(s,&index)) {
                 re0_error_append(s->errors,RE0_ERR_SEMANTIC,stmt->span,NULL,"cannot write through an immutable reference");s->had_error=true;
             }
-            if (!sema_assignable_expr(value, target, stmt->index_assign.value)) {
+            if (!sema_assignable_expr(s, value, target, stmt->index_assign.value)) {
                 re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL, "array assignment type mismatch; use an explicit conversion");
                 s->had_error = true;
             }
@@ -1184,7 +1190,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
         case STMT_STORE: {
             Re0Type *target=infer_type(s,stmt->store.target);
             Re0Type *value=infer_type(s,stmt->store.value);
-            if(!writable_place(s,stmt->store.target) || !sema_assignable_expr(value,target,stmt->store.value) || stmt->store.value->borrows_local) {
+            if(!writable_place(s,stmt->store.target) || !sema_assignable_expr(s, value,target,stmt->store.value) || stmt->store.value->borrows_local) {
                 re0_error_append(s->errors,RE0_ERR_SEMANTIC,stmt->span,NULL,"invalid pointer store: immutable place, incompatible type, or escaping local borrow");
                 s->had_error=true;
             }
@@ -1261,7 +1267,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
                 }
                 /* B3: return type checking (against the current function return type) */
                 if (s->current_fn_return && vt &&
-                    !sema_assignable_expr(vt, s->current_fn_return, stmt->return_stmt.value)) {
+                    !sema_assignable_expr(s, vt, s->current_fn_return, stmt->return_stmt.value)) {
                     re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
                                     "return type mismatch: expected '%s', got '%s'",
                                     re0_type_kind_name(s->current_fn_return->kind),
@@ -1401,7 +1407,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
             if (stmt->const_decl.type) type = resolve_type(s, stmt->const_decl.type);
             if (stmt->const_decl.value) {
                 Re0Type *value = infer_type(s, stmt->const_decl.value);
-                if (type && !sema_assignable_expr(value, type, stmt->const_decl.value)) {
+                if (type && !sema_assignable_expr(s, value, type, stmt->const_decl.value)) {
                     re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL, "constant type mismatch; use an explicit conversion");
                     s->had_error = true;
                 }
