@@ -51,8 +51,10 @@ class NativeAArch64Tests(unittest.TestCase):
             diag = ""
             try:
                 gdb = subprocess.run(
-                    ["gdb", "-batch", "-ex", "run", "-ex", "bt",
-                     "-ex", "x/8i $pc-16", "--args", str(exe)],
+                    ["gdb", "-batch", "-ex", "run",
+                     "-ex", "print $_siginfo",
+                     "-ex", "info registers pc sp x29 x0 x1 x2",
+                     "-ex", "x/4i $pc", "-ex", "bt", "--args", str(exe)],
                     cwd=self.root, text=True, capture_output=True, timeout=60)
                 diag = "\n--- gdb ---\n" + gdb.stdout + gdb.stderr
             except (OSError, subprocess.SubprocessError) as exc:
