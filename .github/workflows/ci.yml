@@ -127,6 +127,11 @@ jobs:
           make CONFIG=Release test-layout test-layout-faults
           make CONFIG=Release test-c-storage-faults
           REO_TEST_SANITIZE_GENERATED=1 REO_TEST_COMPILER="$PWD/target/Release/rev" python -m unittest discover -s tests/native -p 'test_c_storage.py'
+      - name: C/Reo FFI 与 ABI 回归
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: |
+          ulimit -c 0
+          make CONFIG=Release PYTHON=python test-ffi
       - name: 实验性 aarch64 原生后端回归
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
         run: |

@@ -83,7 +83,7 @@ EXEC := src/exec
 EXTRA := src/extra
 
 # ── source files grouped by module ──
-BASE_SRCS := $(BASE)/arena.c $(BASE)/buffer.c $(BASE)/error.c $(BASE)/re0_log.c $(BASE)/safe.c $(BASE)/span.c $(BASE)/types.c $(BASE)/numeric.c $(BASE)/target.c
+BASE_SRCS := $(BASE)/arena.c $(BASE)/buffer.c $(BASE)/error.c $(BASE)/re0_log.c $(BASE)/safe.c $(BASE)/span.c $(BASE)/types.c $(BASE)/numeric.c $(BASE)/target.c $(BASE)/abi.c
 FRONT_SRCS := $(FRONT)/lexer.c $(FRONT)/token.c $(FRONT)/parser.c $(FRONT)/ast.c $(FRONT)/stream.c
 ANALYSIS_SRCS := $(ANALYSIS)/sema.c $(ANALYSIS)/scope.c $(ANALYSIS)/model.c $(ANALYSIS)/builtins.c $(ANALYSIS)/lint.c
 BACKEND_SRCS := $(BACKEND)/codegen.c $(BACKEND)/backend_c.c $(BACKEND)/backend_c_type.c $(BACKEND)/backend_c_generic.c $(BACKEND)/backend_c_expr.c $(BACKEND)/backend_c_stmt.c $(BACKEND)/backend_reo.c $(BACKEND)/runtime_c.c $(BACKEND)/runtime_conversion.c $(BACKEND)/backend_c_cast.c
@@ -280,6 +280,10 @@ test-bigint: bigint $(TARGET_REV)
 	REO_CC="$(CC)" "./$(TARGET_REV)" run "$(BIGINT_DIR)/demo_bigprime.reo" --lib-dir "$(BIGINT_DIR)/build" --link reo_bigint
 
 # ── compiler-reo (self-hosting seed) ──
+.PHONY: test-ffi
+test-ffi: $(TARGET_REV)
+	REO_TEST_COMPILER="$(abspath $(TARGET_REV))" $(PYTHON) -m unittest discover -s tests/ffi -p "test_*.py"
+
 .PHONY: test-selfhost
 test-selfhost: $(TARGET_REV)
 	"./$(TARGET_REV)" run compiler-reo/lexer.reo

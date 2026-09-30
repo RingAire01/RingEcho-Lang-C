@@ -1,6 +1,7 @@
 #ifndef RE0_NATIVE_TARGET_H
 #define RE0_NATIVE_TARGET_H
 #include <stdbool.h>
+#include "base/abi.h"
 
 /* Target description for the native (direct machine-code) backend. This layer
  * is the single source of truth for architecture, operating system, calling
@@ -53,5 +54,7 @@ const Re0NativeTarget *re0_native_target_find(const char *triple);
 const Re0NativeTarget *re0_native_target_host(void);
 /* Whether this build can encode the given target (arch implemented). */
 bool re0_native_target_supported(const Re0NativeTarget *target);
+/* Target-default C calling convention for the native encoder. */
+Re0CallingConvention re0_native_default_cc(const Re0NativeTarget *target);
 
 #endif

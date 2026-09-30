@@ -2,6 +2,7 @@
 #define RE0_AST_H
 #include "base/span.h"
 #include "base/types.h"
+#include "base/abi.h"
 #include "base/numeric.h"
 #include "base/vec.h"
 #include "base/arena.h"
@@ -92,7 +93,8 @@ typedef struct { char *pname; char *ptype; } Re0FnCallParam;
 typedef struct { char *name; char *type; } Re0StructFieldDecl;
 typedef struct { char *vname; char **types; int type_count; } Re0EnumVariantDecl;
 typedef struct { char *mname; Re0FnCallParam *params; int param_count; char *ret_type; } Re0TraitMethodDecl;
-typedef struct { char *name; Re0FnCallParam *params; int param_count; char *ret_type; bool variadic; } Re0ExternFnDecl;
+typedef struct { char *name; Re0FnCallParam *params; int param_count; char *ret_type; bool variadic;
+                 Re0Linkage linkage; Re0CallingConvention convention; } Re0ExternFnDecl;
 typedef struct { Re0Expr *cond; Re0Stmt **body; int body_count; } Re0IfBranch;
 
 struct Re0Stmt {

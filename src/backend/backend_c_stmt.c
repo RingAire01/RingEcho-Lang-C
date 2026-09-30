@@ -28,7 +28,12 @@ void c_gen_body(Re0Codegen *c, Re0Stmt **body, int count, int depth) {
 void c_gen_extern_decl(Re0Codegen *c, const Re0ExternFnDecl *decl) {
     Re0Buffer *b = &c->output;
     const char *return_type = c_storage_return(decl->ret_type);
-    re0_buffer_write_fmt(b, "extern %s %s(", return_type, decl->name);
+    /* Realize an explicit calling convention with the matching C attribute;
+     * the convention itself is decided by the model, not by the backend. */
+    const char *abi_attr = "";
+    if (decl->convention == RE0_CC_WIN64) abi_attr = "__attribute__((ms_abi)) ";
+    else if (decl->convention == RE0_CC_SYSV64) abi_attr = "__attribute__((sysv_abi)) ";
+    re0_buffer_write_fmt(b, "extern %s %s%s(", return_type, abi_attr, decl->name);
     if (decl->param_count == 0 && !decl->variadic) {
         re0_buffer_write_str(b, "void");
     }

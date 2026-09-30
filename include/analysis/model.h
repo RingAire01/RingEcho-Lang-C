@@ -74,6 +74,8 @@ typedef struct {
     char *ret_type;
     char **type_params;
     int type_param_count;
+    int linkage;    /* Re0Linkage */
+    int convention; /* Re0CallingConvention */
 } Re0FnSignature;
 
 VEC_DECLARE(Re0StructFieldVec, Re0StructField)
@@ -138,6 +140,9 @@ void         re0_model_register_fn(Re0SemanticModel *m, const char *name,
                                    const char *ret_type,
                                    char **type_params, int type_param_count);
 Re0FnSignature *re0_model_find_fn(Re0SemanticModel *m, const char *name);
+/* Record ABI concepts (linkage + calling convention) on a function signature. */
+void            re0_model_set_fn_abi(Re0SemanticModel *m, const char *name,
+                                     int linkage, int convention);
 
 Re0StructDef *re0_model_find_struct(Re0SemanticModel *m, const char *name);
 /* Attach explicit layout requests to a registered struct. */

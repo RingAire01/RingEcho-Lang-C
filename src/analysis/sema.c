@@ -1650,6 +1650,18 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
                 re0_scope_define(s->global_scope, decl->name, fn_type, false);
                 Re0Symbol *symbol = re0_scope_lookup_local(s->global_scope, decl->name);
                 if (symbol) symbol->is_function = true;
+                /* Resolve and validate the calling convention against the
+                 * target: DEFAULT means the target-default C convention, and
+                 * an explicit convention must be realizable by the target. */
+                Re0CallingConvention cc = decl->convention;
+                if (cc == RE0_CC_DEFAULT) cc = s->target->default_cc;
+                if (!(s->target->supported_cc & (1u << (unsigned)cc))) {
+                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                     "calling convention '%s' is not supported on target '%s'",
+                                     re0_calling_convention_name(cc), s->target->name);
+                    s->had_error = true;
+                }
+                re0_model_set_fn_abi(s->model, decl->name, decl->linkage, cc);
             }
             break;
         case STMT_TYPE_ALIAS:

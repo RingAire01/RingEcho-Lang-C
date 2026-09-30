@@ -60,6 +60,20 @@ const Re0NativeTarget *re0_native_target_host(void) {
     return NULL;
 }
 
+Re0CallingConvention re0_native_default_cc(const Re0NativeTarget *target) {
+    if (!target) return RE0_CC_DEFAULT;
+    switch (target->abi) {
+        case RE0_ABI_SYSV64: return RE0_CC_SYSV64;
+        case RE0_ABI_SYSV32: return RE0_CC_SYSV32;
+        case RE0_ABI_AAPCS64: return RE0_CC_AAPCS64;
+        case RE0_ABI_AAPCS32: return RE0_CC_AAPCS32;
+        case RE0_ABI_MS64: return RE0_CC_WIN64;
+        case RE0_ABI_MS32: return RE0_CC_MS32;
+        case RE0_ABI_MSARM64: return RE0_CC_MSARM64;
+        default: return RE0_CC_DEFAULT;
+    }
+}
+
 bool re0_native_target_supported(const Re0NativeTarget *target) {
     if (!target) return false;
     /* Only targets with a complete encoder and object writer are accepted.

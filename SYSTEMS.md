@@ -129,6 +129,37 @@ provides a pluggable allocator; a successful allocation may return a null
 pointer and callers must check. Bytes can be initialised with the
 `mem_*` primitives from §2a.
 
+## 6. Foreign functions, linkage and calling conventions
+
+Foreign functions are declared without a body:
+
+```
+extern "C" fn puts(s: *const u8) -> i32;
+extern "C" { fn ffi_add(a: i32, b: i32) -> i32; }
+extern "sysv64" fn f(a: i32) -> i32;
+extern "win64"  fn g(a: i32) -> i32;
+```
+
+**Linkage and calling convention are distinct compiler-model concepts** (see
+`include/base/abi.h`): `Re0Linkage` (REO / C) controls symbol naming and who
+resolves the symbol; `Re0CallingConvention` (DEFAULT / SYSV64 / WIN64 /
+AAPCS64 / AAPCS32 / SYSV32 / MS32 / MSARM64) controls argument/return
+registers, stack layout and alignment. `extern "C"` means C linkage (no
+RingEcho mangling) with the *target-default* C convention; `"C"` is never
+hard-wired to one architecture.
+
+The target layout carries `default_cc` and the set of `supported_cc`. DEFAULT
+resolves to `target->default_cc` during semantic analysis; an explicit
+convention is rejected unless the target supports it, so behaviour never
+depends on the build host. A backend that cannot realize a convention for a
+target (e.g. the native backend, which currently implements only the
+target-default ABI) rejects it explicitly rather than falling back.
+
+The C backend realises an explicit convention through the matching C
+attribute (`__attribute__((sysv_abi))` / `((ms_abi))`); the attribute is a
+realisation of the model's decision, not the source of it. Foreign arguments
+and results use the normal RingEcho type checker; `ptr` maps to `void*`.
+
 ## 5. Planned (tracked milestones)
 
 - `unsafe` boundary (raw operations gated).

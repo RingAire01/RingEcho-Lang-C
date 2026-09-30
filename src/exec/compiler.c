@@ -226,11 +226,16 @@ bool re0_compiler_compile_file(Re0Compiler *c, const char *path, const char *out
     {
         const Re0TargetLayout *layout = re0_target_layout_host();
         if (c->backend == &re0_backend_native && c->native_target) {
+            bool win = c->native_target->os == RE0_OS_WINDOWS;
             switch (c->native_target->arch) {
-                case RE0_ARCH_X86_64: layout = re0_target_layout_find("x86_64"); break;
-                case RE0_ARCH_X86: layout = re0_target_layout_find("x86"); break;
-                case RE0_ARCH_AARCH64: layout = re0_target_layout_find("aarch64"); break;
-                case RE0_ARCH_ARM: layout = re0_target_layout_find("arm"); break;
+                case RE0_ARCH_X86_64:
+                    layout = re0_target_layout_find(win ? "x86_64-windows" : "x86_64"); break;
+                case RE0_ARCH_X86:
+                    layout = re0_target_layout_find(win ? "x86-windows" : "x86"); break;
+                case RE0_ARCH_AARCH64:
+                    layout = re0_target_layout_find(win ? "aarch64-windows" : "aarch64"); break;
+                case RE0_ARCH_ARM:
+                    layout = re0_target_layout_find("arm"); break;
                 default: break;
             }
         }

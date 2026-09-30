@@ -726,37 +726,62 @@ static Re0Stmt *parse_fn(Re0Parser *p) {
     return s;
 }
 
-static Re0Stmt *parse_extern(Re0Parser *p) {
-    Re0Span span = peek(p)->span; advance(p); expect(p, TK_LBRACE);
-    Re0ExternFnDecl *funcs = NULL; int func_count = 0; int func_cap = 0;
-    while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream)) {
-        expect(p, TK_KW_FN); Re0Token nm = expect(p, TK_IDENT);
-        PARSER_GROW(funcs, func_count, func_cap, Re0ExternFnDecl);
-        funcs[func_count].name = re0_arena_strdup(p->arena, nm.str_val);
-        expect(p, TK_LPAREN);
-        Re0FnCallParam *params = NULL; int pc = 0; int pcap = 0;
-        if (check(p, TK_ELLIPSIS)) {
-            advance(p);
-            funcs[func_count].variadic = true;
-        } else if (!check(p, TK_RPAREN)) {
-            Re0Token pn = expect(p, TK_IDENT); expect(p, TK_COLON);
+static void *parse_extern_fn(Re0Parser *p, Re0ExternFnDecl **funcs, int *count, int *cap,
+                             Re0Linkage linkage, Re0CallingConvention cc) {
+    expect(p, TK_KW_FN); Re0Token nm = expect(p, TK_IDENT);
+    PARSER_GROW(*funcs, *count, *cap, Re0ExternFnDecl);
+    Re0ExternFnDecl *d = &(*funcs)[*count];
+    d->params = NULL; d->param_count = 0; d->ret_type = NULL; d->variadic = false;
+    d->linkage = linkage; d->convention = cc;
+    d->name = re0_arena_strdup(p->arena, nm.str_val);
+    expect(p, TK_LPAREN);
+    Re0FnCallParam *params = NULL; int pc = 0; int pcap = 0;
+    if (check(p, TK_ELLIPSIS)) {
+        advance(p); d->variadic = true;
+    } else if (!check(p, TK_RPAREN)) {
+        Re0Token pn = expect(p, TK_IDENT); expect(p, TK_COLON);
+        PARSER_GROW(params, pc, pcap, Re0FnCallParam);
+        params[pc].pname = re0_arena_strdup(p->arena, pn.str_val);
+        params[pc].ptype = re0_arena_strdup(p->arena, parse_type_name(p)); pc++;
+        while (check(p, TK_COMMA)) { advance(p);
+            if (check(p, TK_ELLIPSIS)) { advance(p); d->variadic = true; break; }
+            pn = expect(p, TK_IDENT); expect(p, TK_COLON);
             PARSER_GROW(params, pc, pcap, Re0FnCallParam);
             params[pc].pname = re0_arena_strdup(p->arena, pn.str_val);
             params[pc].ptype = re0_arena_strdup(p->arena, parse_type_name(p)); pc++;
-            while (check(p, TK_COMMA)) { advance(p);
-                if (check(p, TK_ELLIPSIS)) { advance(p); funcs[func_count].variadic = true; break; }
-                pn = expect(p, TK_IDENT); expect(p, TK_COLON);
-                PARSER_GROW(params, pc, pcap, Re0FnCallParam);
-                params[pc].pname = re0_arena_strdup(p->arena, pn.str_val);
-                params[pc].ptype = re0_arena_strdup(p->arena, parse_type_name(p)); pc++;
-            }
         }
-        expect(p, TK_RPAREN); funcs[func_count].params = params; funcs[func_count].param_count = pc;
-        funcs[func_count].ret_type = NULL;
-        if (check(p, TK_ARROW)) { advance(p); funcs[func_count].ret_type = re0_arena_strdup(p->arena, parse_type_name(p)); }
-        expect(p, TK_SEMICOLON); func_count++;
     }
-    expect(p, TK_RBRACE);
+    expect(p, TK_RPAREN); d->params = params; d->param_count = pc;
+    if (check(p, TK_ARROW)) { advance(p); d->ret_type = re0_arena_strdup(p->arena, parse_type_name(p)); }
+    expect(p, TK_SEMICOLON);
+    (*count)++;
+    return funcs;
+}
+
+static Re0Stmt *parse_extern(Re0Parser *p) {
+    Re0Span span = peek(p)->span; advance(p);
+    /* Optional ABI string; defaults to C linkage with the target's default C
+     * calling convention. Linkage and convention are distinct model concepts. */
+    Re0Linkage linkage = RE0_LINKAGE_C;
+    Re0CallingConvention cc = RE0_CC_DEFAULT;
+    if (check(p, TK_STRING)) {
+        const char *abi = peek(p)->str_val;
+        if (!re0_abi_parse(abi, &linkage, &cc)) {
+            re0_error_append(p->errors, RE0_ERR_SYNTAX, peek(p)->span, NULL,
+                             "unsupported extern ABI '%s'", abi ? abi : "");
+            p->had_error = true;
+        }
+        advance(p);
+    }
+    Re0ExternFnDecl *funcs = NULL; int func_count = 0; int func_cap = 0;
+    if (check(p, TK_LBRACE)) {
+        advance(p);
+        while (!check(p, TK_RBRACE) && !re0_stream_eof(p->stream))
+            parse_extern_fn(p, &funcs, &func_count, &func_cap, linkage, cc);
+        expect(p, TK_RBRACE);
+    } else {
+        parse_extern_fn(p, &funcs, &func_count, &func_cap, linkage, cc);
+    }
     Re0Stmt *s = re0_stmt_make(STMT_EXTERN, span);
     s->extern_.funcs = funcs; s->extern_.func_count = func_count; return s;
 }

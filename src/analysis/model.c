@@ -268,6 +268,12 @@ Re0FnSignature *re0_model_find_fn(Re0SemanticModel *m, const char *name) {
     return NULL;
 }
 
+void re0_model_set_fn_abi(Re0SemanticModel *m, const char *name,
+                          int linkage, int convention) {
+    Re0FnSignature *fn = re0_model_find_fn(m, name);
+    if (fn) { fn->linkage = linkage; fn->convention = convention; }
+}
+
 /* ════════════════════════════════════════
  *  Standard types
  * ════════════════════════════════════════ */

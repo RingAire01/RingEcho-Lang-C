@@ -351,6 +351,9 @@ static void register_function(NModule *m, const char *name, const char *ret,
     f->name = name; f->result = type_name(ret); f->ast = ast; f->param_count = count;
     if (f->result == N_INVALID || (ext && ext->variadic))
         n_error(m, RE0_SPAN_ZERO, "unsupported native function signature");
+    else if (ext && ext->convention != RE0_CC_DEFAULT &&
+             ext->convention != re0_native_default_cc(m->target))
+        n_error(m, RE0_SPAN_ZERO, "this calling convention is not supported by the native backend for the selected target");
     for (int i = 0; i < count; i++) {
         f->params[i] = type_name(ast ? ast->function.params[i].ptype : ext->params[i].ptype);
         if (f->params[i] == N_INVALID || f->params[i] == N_UNIT)
