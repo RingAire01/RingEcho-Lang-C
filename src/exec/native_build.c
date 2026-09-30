@@ -5,12 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 /* GNU ld emulation name for an ELF target, or NULL when unsupported. */
 static const char *elf_emulation(const Re0NativeTarget *target) {
     switch (target->arch) {
