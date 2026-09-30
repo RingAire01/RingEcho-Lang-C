@@ -81,6 +81,21 @@ static int c_gen_expr_impl(Re0Codegen *c, Re0Expr *e) {
                 re0_buffer_write_fmt(b,"); strcmp(__left%d?__left%d:\"\",__right%d?__right%d:\"\") %s 0; })",id,id,id,id,binop_c(op));
                 break;
             }
+            /* Raw pointer/reference operands use C's own pointer arithmetic
+             * and comparison; they must not pass through the numeric
+             * conversion runtime. */
+            {
+                Re0Type *lt = e->binary.left ? e->binary.left->resolved_type : NULL;
+                Re0Type *rt = e->binary.right ? e->binary.right->resolved_type : NULL;
+                bool lptr = lt && (lt->kind == RE0_TYPE_PTR || lt->kind == RE0_TYPE_REFERENCE);
+                bool rptr = rt && (rt->kind == RE0_TYPE_PTR || rt->kind == RE0_TYPE_REFERENCE);
+                if (lptr || rptr) {
+                    re0_buffer_write_char(b, '('); c_gen_expr(c, e->binary.left);
+                    re0_buffer_write_fmt(b, " %s ", binop_c(op));
+                    c_gen_expr(c, e->binary.right); re0_buffer_write_char(b, ')');
+                    break;
+                }
+            }
             Re0TypeKind result_kind = c_expr_scalar_kind(e);
             int operation = op == BINOP_ADD ? 0 : op == BINOP_SUB ? 1 : op == BINOP_MUL ? 2 :
                 op == BINOP_DIV ? 3 : op == BINOP_MOD ? 4 : op == BINOP_SHL ? 5 : op == BINOP_SHR ? 6 : -1;

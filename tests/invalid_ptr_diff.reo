@@ -1,0 +1,7 @@
+/* Pointer difference requires identical pointee types. */
+fn main() {
+    let a: [i64; 2] = [1, 2];
+    let p: *mut i64 = (&mut a[0]) as *mut i64;
+    let q: *mut u8 = p as *mut u8;
+    let d = p - q;
+}

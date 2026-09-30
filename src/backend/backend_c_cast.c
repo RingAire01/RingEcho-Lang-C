@@ -53,11 +53,16 @@ static bool c_gen_array_conversion(Re0Codegen *c, Re0Expr *e) {
 int c_gen_cast(Re0Codegen *c, Re0Expr *e) {
     Re0Buffer *out = &c->output;
     if (c_gen_array_conversion(c, e)) return 0;
-    /* Integer <-> function pointer: emit a plain C cast. */
+    /* Function pointers, raw pointers and references lower to a plain C cast;
+     * C already performs pointer/integer and pointer/pointer conversions. */
     {
         Re0Type *src_t = e->cast.inner ? e->cast.inner->resolved_type : NULL;
         Re0Type *dst_t = e->resolved_type;
-        if ((src_t && src_t->kind == RE0_TYPE_FN) || (dst_t && dst_t->kind == RE0_TYPE_FN)) {
+        bool src_ptr = src_t && (src_t->kind == RE0_TYPE_FN || src_t->kind == RE0_TYPE_PTR ||
+                                 src_t->kind == RE0_TYPE_REFERENCE);
+        bool dst_ptr = dst_t && (dst_t->kind == RE0_TYPE_FN || dst_t->kind == RE0_TYPE_PTR ||
+                                 dst_t->kind == RE0_TYPE_REFERENCE);
+        if (src_ptr || dst_ptr) {
             re0_buffer_write_fmt(out, "((%s)(", reo_type_to_c(e->cast.target_type));
             c_gen_expr(c, e->cast.inner);
             re0_buffer_write_str(out, "))");

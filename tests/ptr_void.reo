@@ -1,0 +1,11 @@
+/* Opaque void pointers can be cast between typed pointer types. */
+fn main() {
+    let x: i64 = 7;
+    let p: *mut i64 = (&x) as *mut i64;
+    let v: *mut void = p as *mut void;
+    let q: *mut i64 = v as *mut i64;
+    assert(*q == 7);
+    let o: ptr = v as ptr;
+    let w: *mut i64 = o as *mut i64;
+    assert(*w == 7);
+}

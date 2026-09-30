@@ -1,0 +1,15 @@
+/* Pointer addition, subtraction, difference and comparison. */
+fn main() {
+    let a: [i64; 4] = [10, 20, 30, 40];
+    let base: *mut i64 = (&mut a[0]) as *mut i64;
+    assert(*(base + 1) == 20);
+    assert(*(base + 3) == 40);
+    let d: isize = (base + 3) - base;
+    assert(d == 3);
+    assert(base != (base + 1));
+    assert(base < (base + 1));
+    assert((base + 1) > base);
+    assert(base == base);
+    let back: *mut i64 = (base + 2) - 1;
+    assert(*back == 20);
+}

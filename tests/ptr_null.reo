@@ -1,0 +1,17 @@
+/* Null pointer constant, opaque pointers and integer round-trips. */
+fn main() {
+    let p: *mut i64 = 0 as *mut i64;
+    assert(p == 0);
+    assert(0 == p);
+    let q: *mut i64 = 0;
+    assert(q == p);
+
+    let n: usize = p as usize;
+    assert(n == 0);
+    let r: *mut i64 = n as *mut i64;
+    assert(r == p);
+
+    let v: usize = 4096;
+    let w: *mut i64 = v as *mut i64;
+    assert((w as usize) == 4096);
+}

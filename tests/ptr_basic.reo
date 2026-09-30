@@ -1,0 +1,11 @@
+/* Raw pointer address-of, dereference and store. */
+fn main() {
+    let x: i64 = 42;
+    let p: *mut i64 = (&mut x) as *mut i64;
+    assert(*p == 42);
+    *p = 43;
+    assert(x == 43);
+
+    let q: *const i64 = p as *const i64;
+    assert(*q == 43);
+}

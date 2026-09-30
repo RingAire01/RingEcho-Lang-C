@@ -1,0 +1,5 @@
+/* Opaque pointer arithmetic must be rejected. */
+fn main() {
+    let o: ptr = 0 as ptr;
+    let bad = o + 1;
+}

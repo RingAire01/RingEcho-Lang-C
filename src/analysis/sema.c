@@ -50,7 +50,14 @@ static bool sema_assignable(Re0Type *from, Re0Type *to) {
     return re0_type_coercible(from, to); /* equal or numeric conversion */
 }
 
+/* A literal `0` is the null pointer constant. */
+static bool is_int_zero(const Re0Expr *e) {
+    return e && e->kind == EXPR_INT && !e->int_lit.suffix &&
+           !e->int_lit.integer.negative && e->int_lit.integer.low == 0;
+}
+
 static bool sema_assignable_expr(Re0Sema *s, Re0Type *from, Re0Type *to, Re0Expr *expr) {
+    if (to && to->kind == RE0_TYPE_PTR && is_int_zero(expr)) return true; /* null */
     if (expr && to && expr->kind == EXPR_INT && !expr->int_lit.suffix &&
         re0_type_is_integer(to->kind))
         return re0_integer_fits(expr->int_lit.integer,
@@ -475,6 +482,55 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
         case EXPR_BINARY: {
             Re0Type *lt = infer_type(s, e->binary.left);
             Re0Type *rt = infer_type(s, e->binary.right);
+            /* Raw pointer semantics: comparison, addition/subtraction with an
+             * integer, and pointer difference. Opaque `ptr` cannot be
+             * dereferenced or advanced without a pointee type. */
+            {
+                bool lptr = lt && lt->kind == RE0_TYPE_PTR;
+                bool rptr = rt && rt->kind == RE0_TYPE_PTR;
+                bool lref = lt && lt->kind == RE0_TYPE_REFERENCE;
+                bool rref = rt && rt->kind == RE0_TYPE_REFERENCE;
+                bool lzero = is_int_zero(e->binary.left);
+                bool rzero = is_int_zero(e->binary.right);
+                bool cmp = e->binary.op >= BINOP_EQ && e->binary.op <= BINOP_GE;
+                if (cmp && (lptr || rptr || lref || rref)) {
+                    Re0Type *lp = lptr ? lt->ptr_.inner : (lref ? lt->ref_.inner : NULL);
+                    Re0Type *rp = rptr ? rt->ptr_.inner : (rref ? rt->ref_.inner : NULL);
+                    bool both_values = (lptr || lref) && (rptr || rref);
+                    bool ok = lzero || rzero || (both_values && (re0_type_equal(lp, rp) || !lp || !rp));
+                    if (!ok) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "cannot compare pointer '%s' with '%s'",
+                                         lt ? re0_type_kind_name(lt->kind) : "?",
+                                         rt ? re0_type_kind_name(rt->kind) : "?");
+                        s->had_error = true;
+                    }
+                    return re0_type_make(RE0_TYPE_BOOL, NULL);
+                }
+                if ((e->binary.op == BINOP_ADD || e->binary.op == BINOP_SUB) && lptr) {
+                    if (!lt->ptr_.inner) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "pointer arithmetic requires a typed pointer, not opaque 'ptr'");
+                        s->had_error = true;
+                    } else if (e->binary.op == BINOP_SUB && rptr) {
+                        if (!re0_type_equal(lt->ptr_.inner, rt->ptr_.inner)) {
+                            re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                             "pointer difference requires identical pointee types");
+                            s->had_error = true;
+                        }
+                        return re0_type_make(RE0_TYPE_ISIZE, NULL);
+                    }
+                    return lt;
+                }
+                if (e->binary.op == BINOP_ADD && rptr) {
+                    if (!rt->ptr_.inner) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "pointer arithmetic requires a typed pointer, not opaque 'ptr'");
+                        s->had_error = true;
+                    }
+                    return rt;
+                }
+            }
             switch (e->binary.op) {
                 case BINOP_EQ: case BINOP_NE: case BINOP_LT:
                 case BINOP_LE: case BINOP_GT: case BINOP_GE:
@@ -1039,7 +1095,10 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
             if (e->cast.target_type) {
                 Re0Type *target = resolve_type(s, e->cast.target_type);
                 if (!target) target = re0_sema_own_type(s, re0_type_parse(e->cast.target_type));
-                if (target && target->kind <= RE0_TYPE_PTR)
+                /* Scalar target spellings are canonicalised; a pointer keeps
+                 * its pointee so `as *mut u8` is not collapsed to opaque. */
+                if (target && target->kind <= RE0_TYPE_PTR &&
+                    !(target->kind == RE0_TYPE_PTR && target->ptr_.inner))
                     e->cast.target_type = re0_arena_strdup(s->arena, re0_type_kind_name(target->kind));
                 if (!target) return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
 
@@ -1056,7 +1115,16 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                           || (sk == RE0_TYPE_STR && d_int_like)           /* str -> numeric */
                           || (s_int_like && dk == RE0_TYPE_STR)           /* numeric -> str */
                           || (s_int_like && dk == RE0_TYPE_FN)            /* integer <-> function pointer */
-                          || (sk == RE0_TYPE_FN && d_int_like);
+                          || (sk == RE0_TYPE_FN && d_int_like)
+                          || (sk == RE0_TYPE_PTR && dk == RE0_TYPE_PTR)   /* pointer <-> pointer */
+                          || (sk == RE0_TYPE_PTR && re0_type_is_integer(dk))
+                          || (re0_type_is_integer(sk) && dk == RE0_TYPE_PTR)
+                          || (sk == RE0_TYPE_REFERENCE && dk == RE0_TYPE_PTR)
+                          || (sk == RE0_TYPE_PTR && dk == RE0_TYPE_REFERENCE)
+                          || (sk == RE0_TYPE_PTR && dk == RE0_TYPE_FN)
+                          || (sk == RE0_TYPE_FN && dk == RE0_TYPE_PTR)
+                          || (sk == RE0_TYPE_STR && dk == RE0_TYPE_PTR)
+                          || (sk == RE0_TYPE_PTR && dk == RE0_TYPE_STR);
                 if (e->cast.checked && src && src->kind == RE0_TYPE_ARRAY && target->kind == RE0_TYPE_ARRAY &&
                     src->array.inner && target->array.inner && src->array.inner->kind < RE0_TYPE_STR && target->array.inner->kind < RE0_TYPE_STR)
                     legal = true;
