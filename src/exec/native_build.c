@@ -90,7 +90,7 @@ bool re0_native_build(Re0Build *build, const Re0Buffer *object,
         if (t->os == RE0_OS_MACOS) {
             const char *args[] = {linker, "-arch", macho_arch(t),
                                   "-platform_version", "macos", "11.0", "11.0",
-                                  "-e", "_start", "-o", temporary, object_path, NULL};
+                                  "-static", "-e", "_start", "-o", temporary, object_path, NULL};
             rc = re0_process_run(linker, args);
         } else {
             const char *emulation = elf_emulation(t);
