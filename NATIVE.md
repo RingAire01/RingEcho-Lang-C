@@ -174,10 +174,25 @@ target/Release/rev build tests/native/basic.reo --backend native \
 - 无原生 armv7 CI runner：由 `ubuntu-24.04`（x64）安装 `qemu-user` 与
   `arm-linux-gnueabihf` 交叉工具链执行回归；其他环境只做 `--emit obj` 与反汇编。
 
+## macOS 目标（Mach-O）
+
+目标 `x86_64-apple-darwin` / `aarch64-apple-darwin`：自写 Mach-O 64 可重定位
+对象（`MH_OBJECT`，`__TEXT,__text`，符号带 `_` 前缀，外部跳转重定位
+`X86_64_RELOC_BRANCH` / `ARM64_RELOC_BRANCH26`），用系统 `ld`（ld64）链接：
+
+```bash
+target/Release/rev build tests/native/basic.reo --backend native \
+  --target x86_64-apple-darwin -o /tmp/basic
+```
+
+- 机器码复用 x86-64 SysV 与 AArch64 AAPCS64 编码器；入口 `_start` 使用
+  macOS 的退出系统调用（x86-64 `0x2000001`，arm64 `x16=1; svc #0x80`）。
+- 由 CI 的 `macos-15-intel` / `macos-15` 原生 runner 执行验证。
+
 ## TODO: 后续目标
 
-- 各目标（x86-64/i386/aarch64/armv7）的浮点（`f32`/`f64`）与浮点转换。
-- macOS（Mach-O，x86-64/arm64）、Windows（COFF + Microsoft ABI，x86-64/x86/arm64）。
+- 各目标（i386/aarch64/armv7）的浮点（`f32`/`f64`）与浮点转换（x86-64 已支持）。
+- Windows（COFF + Microsoft ABI，x86-64/x86/arm64）。
 - 聚合值、指针表示与聚合 ABI 分类。
 
 完整类型迁移的设计、已完成部分与剩余工作见 [TYPE_SYSTEM.md](TYPE_SYSTEM.md)。

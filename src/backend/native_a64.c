@@ -302,8 +302,13 @@ bool n_encode_a64(NModule *m) {
         size_t at = m->text.len;
         inst(&m->text, 0x94000000u);                 /* bl main */
         n_reloc_add(m, at, main_index);
-        mov_imm(&m->text, 8, 93);                    /* exit syscall */
-        inst(&m->text, 0xD4000001u);                 /* svc #0 */
+        if (m->target->os == RE0_OS_MACOS) {
+            mov_imm(&m->text, 16, 1);                /* x16 = 1 (BSD exit) */
+            inst(&m->text, 0xD4001001u);             /* svc #0x80 */
+        } else {
+            mov_imm(&m->text, 8, 93);                /* x8 = 93 (Linux exit) */
+            inst(&m->text, 0xD4000001u);             /* svc #0 */
+        }
         inst(&m->text, 0x00000000u);                 /* udf */
         m->entry_size = m->text.len - m->entry_offset;
     }

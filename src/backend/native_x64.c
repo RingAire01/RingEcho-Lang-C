@@ -216,7 +216,12 @@ bool n_encode_x64(NModule *m) {
         m->entry_offset = m->text.len;
         CODE(&m->text, 0x31,0xed, 0x48,0x83,0xe4,0xf0); /* clear rbp; align rsp */
         relocation(m, main_index);
-        CODE(&m->text, 0x48,0x89,0xc7, 0xb8,0x3c,0,0,0, 0x0f,0x05, 0x0f,0x0b);
+        CODE(&m->text, 0x48,0x89,0xc7);            /* rdi = exit status */
+        if (m->target->os == RE0_OS_MACOS)
+            CODE(&m->text, 0xb8, 0x01,0x00,0x00,0x02); /* mov eax, 0x2000001 (exit) */
+        else
+            CODE(&m->text, 0xb8, 0x3c,0,0,0);      /* mov eax, 60 (exit) */
+        CODE(&m->text, 0x0f,0x05, 0x0f,0x0b);
         m->entry_size = m->text.len - m->entry_offset;
     }
     return !m->codegen->had_error && !re0_buffer_failed(&m->text);

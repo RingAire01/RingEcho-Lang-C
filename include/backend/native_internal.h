@@ -68,6 +68,7 @@ bool n_encode_arm(NModule *m);
 /* Object writers: serialize m->text and m->relocs into codegen->output. */
 bool n_elf64(NModule *m);
 bool n_elf32(NModule *m);
+bool n_macho(NModule *m);
 /* Arch/format dispatch owned by native.c. */
 bool n_encode(NModule *m);
 bool n_object(NModule *m);

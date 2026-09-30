@@ -22,6 +22,12 @@ static const char *elf_emulation(const Re0NativeTarget *target) {
     }
 }
 #endif
+#if defined(__linux__) || defined(__APPLE__)
+/* Mach-O architecture name for ld64. */
+static const char *macho_arch(const Re0NativeTarget *target) {
+    return target->arch == RE0_ARCH_X86_64 ? "x86_64" : "arm64";
+}
+#endif
 
 /* Files are published by rename from an exclusive adjacent temporary file.
  * Link failures leave the prior destination intact. No shell is involved. */
@@ -35,7 +41,7 @@ bool re0_native_build(Re0Build *build, const Re0Buffer *object,
                          "no native target for this host; pass --target <triple>");
         return false;
     }
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     const size_t max_output = 4096;
     size_t length = strlen(output);
     if (length > max_output) {
@@ -72,21 +78,36 @@ bool re0_native_build(Re0Build *build, const Re0Buffer *object,
     }
     if (ok && !emit_object) {
         const char *linker = getenv("REO_LD");
+        if (t->os == RE0_OS_MACOS && (!linker || !*linker)) {
+#if defined(__APPLE__)
+            linker = "ld";
+#else
+            linker = "ld64.lld";
+#endif
+        }
         if (!linker || !*linker) linker = "ld";
-        const char *emulation = elf_emulation(t);
-        if (!emulation) {
-            re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                             "linking this target is not supported yet; use --emit obj");
-            ok = false;
+        int rc = 0;
+        if (t->os == RE0_OS_MACOS) {
+            const char *args[] = {linker, "-arch", macho_arch(t),
+                                  "-platform_version", "macos", "11.0", "11.0",
+                                  "-e", "_start", "-o", temporary, object_path, NULL};
+            rc = re0_process_run(linker, args);
         } else {
-            const char *args[] = {linker, "-m", emulation, "-z", "noexecstack",
-                                 "--build-id=none", "-e", "_start", "-o", temporary, object_path, NULL};
-            int rc = re0_process_run(linker, args);
-            if (rc != 0) {
+            const char *emulation = elf_emulation(t);
+            if (!emulation) {
                 re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
-                                 "native linker failed (exit code %d); extern symbols require external linking of --emit obj output", rc);
+                                 "linking this target is not supported yet; use --emit obj");
                 ok = false;
+            } else {
+                const char *args[] = {linker, "-m", emulation, "-z", "noexecstack",
+                                     "--build-id=none", "-e", "_start", "-o", temporary, object_path, NULL};
+                rc = re0_process_run(linker, args);
             }
+        }
+        if (ok && rc != 0) {
+            re0_error_append(build->errors, RE0_ERR_IO, RE0_SPAN_ZERO, NULL,
+                             "native linker failed (exit code %d); extern symbols require external linking of --emit obj output", rc);
+            ok = false;
         }
     }
     if (ok && chmod(temporary, emit_object ? 0600 : 0700) != 0) ok = false;
