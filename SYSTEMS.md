@@ -61,6 +61,17 @@ plain address, never an owned reference. Dereferencing an invalid pointer is
 undefined behaviour; the compiler does not insert checks (an `unsafe` boundary
 is planned, see §5).
 
+## 1b. Compile-time layout queries
+
+`sizeof<T>()`, `alignof<T>()` and `offsetof<T>("field")` are compile-time
+constants whose values are computed by **RingEcho's own target layout model**
+(`base/target.h` + `analysis/layout.h`), never by the host C compiler.
+Semantic analysis folds them to an integer literal of type `usize`, so every
+backend consumes the same value and the result is target-correct (e.g.
+`sizeof<usize>()` is 4 for a 32-bit target and 8 for a 64-bit target).
+`T` must currently be a single identifier (scalar, pointer, or named
+struct/enum); composite spellings are a later extension.
+
 ## 2a. Arrays, slices and byte buffers
 
 - `[T; N]` is a contiguous value type; `sizeof([T; N]) == sizeof(T) * N`.

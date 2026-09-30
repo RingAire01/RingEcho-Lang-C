@@ -1,0 +1,5 @@
+/* offsetof on a missing field must be rejected. */
+struct Point { x: i64, y: i32 }
+fn main() {
+    let o: usize = offsetof<Point>("z");
+}

@@ -1,0 +1,16 @@
+/* sizeof/alignof/offsetof are evaluated by RingEcho's layout model. */
+struct Point { x: i64, y: i32 }
+
+fn main() {
+    assert(sizeof<u8>() == 1);
+    assert(sizeof<i32>() == 4);
+    assert(sizeof<i64>() == 8);
+    assert(sizeof<usize>() == sizeof<i64>());
+    assert(sizeof<ptr>() == sizeof<usize>());
+    assert(alignof<i64>() == 8);
+
+    assert(alignof<Point>() == 8);
+    assert(sizeof<Point>() == 16);
+    assert(offsetof<Point>("x") == 0);
+    assert(offsetof<Point>("y") == 8);
+}

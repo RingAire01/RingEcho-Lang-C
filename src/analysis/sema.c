@@ -1,5 +1,6 @@
 #include "base/safe.h"
 #include "analysis/sema.h"
+#include "analysis/layout.h"
 #include <stdlib.h>
 #include <string.h>
 #include <float.h>
@@ -317,6 +318,30 @@ Re0Type *re0_sema_own_type(Re0Sema *s, Re0Type *t) {
 
 static Re0Type *infer_type(Re0Sema *s, Re0Expr *e);
 static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e);
+
+/* Evaluate sizeof/alignof/offsetof through RingEcho's own target layout model
+ * (never the host C compiler). Returns false and reports on failure. */
+static bool sema_layout_query(Re0Sema *s, const char *tyname, const char *field,
+                              bool align_only, uint64_t *out) {
+    Re0LayoutManager m;
+    if (!re0_layout_init(&m, s->target, s->model, &s->checked, s->errors)) return false;
+    Re0Layout *layout = re0_layout_parse(&m, tyname);
+    bool ok = layout != NULL;
+    if (ok) {
+        if (field) {
+            const Re0LayoutField *f = re0_layout_field(layout, field);
+            if (!f) {
+                re0_error_append(s->errors, RE0_ERR_SEMANTIC, RE0_SPAN_ZERO, NULL,
+                                 "offsetof: type '%s' has no field '%s'", tyname, field);
+                ok = false;
+            } else *out = (uint64_t)f->offset;
+        } else {
+            *out = align_only ? (uint64_t)layout->align : (uint64_t)layout->size;
+        }
+    }
+    re0_layout_destroy(&m);
+    return ok;
+}
 
 static bool is_place(Re0Expr *e) {
     return e && (e->kind==EXPR_IDENT || e->kind==EXPR_SELECT || e->kind==EXPR_INDEX ||
@@ -639,6 +664,58 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
             return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
         }
         case EXPR_CALL: {
+            /* Compile-time layout queries: sizeof<T>() / alignof<T>() /
+             * offsetof<T>("field") are folded to an integer literal whose
+             * value comes from RingEcho's layout model. */
+            if (e->call.callee && e->call.callee->kind == EXPR_IDENT) {
+                const char *nm = e->call.callee->ident.name;
+                const char *open = nm ? strchr(nm, '<') : NULL;
+                const char *close = nm ? strrchr(nm, '>') : NULL;
+                bool is_size = nm && strncmp(nm, "sizeof<", 7) == 0;
+                bool is_align = nm && strncmp(nm, "alignof<", 8) == 0;
+                bool is_off = nm && strncmp(nm, "offsetof<", 9) == 0;
+                if ((is_size || is_align || is_off) && open && close && close > open + 1) {
+                    size_t tlen = (size_t)(close - open - 1);
+                    const char *field = NULL;
+                    if (tlen >= 256) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "layout query type name is too long");
+                        s->had_error = true;
+                        return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    }
+                    char tyname[256];
+                    memcpy(tyname, open + 1, tlen); tyname[tlen] = '\0';
+                    for (int ai = 0; ai < e->call.arg_count; ai++) infer_type(s, e->call.args[ai]);
+                    if (is_off) {
+                        if (e->call.arg_count != 1 || !e->call.args[0] || e->call.args[0]->kind != EXPR_STRING) {
+                            re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                             "offsetof requires one string-literal field name");
+                            s->had_error = true;
+                            return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                        }
+                        field = e->call.args[0]->str_lit.val;
+                    } else if (e->call.arg_count != 0) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "sizeof/alignof take no arguments");
+                        s->had_error = true;
+                        return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    }
+                    uint64_t value = 0;
+                    if (!sema_layout_query(s, tyname, field, is_align, &value)) {
+                        s->had_error = true;
+                        return re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+                    }
+                    e->kind = EXPR_INT;
+                    e->int_lit.val = (int64_t)value;
+                    e->int_lit.suffix = NULL;
+                    e->int_lit.integer.high = 0;
+                    e->int_lit.integer.low = value;
+                    e->int_lit.integer.negative = false;
+                    Re0Type *usize = re0_type_make(RE0_TYPE_USIZE, NULL);
+                    e->resolved_type = usize;
+                    return usize;
+                }
+            }
             /* Validate every argument before any specialized call returns. */
             for (int ai = 0; ai < e->call.arg_count; ai++)
                 infer_type(s, e->call.args[ai]);
