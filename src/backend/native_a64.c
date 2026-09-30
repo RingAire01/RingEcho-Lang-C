@@ -24,8 +24,10 @@ static void mov_imm(Re0Buffer *b, unsigned rd, uint64_t value) {
 static void mov_reg(Re0Buffer *b, unsigned rd, unsigned rm) { inst(b, 0xAA0003E0u | (rm << 16) | rd); }
 static void str_sp(Re0Buffer *b, unsigned rt, uint32_t off) { inst(b, 0xF9000000u | ((off >> 3) << 10) | (31 << 5) | rt); }
 static void ldr_sp(Re0Buffer *b, unsigned rt, uint32_t off) { inst(b, 0xF9400000u | ((off >> 3) << 10) | (31 << 5) | rt); }
-static void push_x0(Re0Buffer *b) { inst(b, 0xD10023FFu); str_sp(b, 0, 0); } /* sub sp,sp,#8; str x0,[sp] */
-static void pop_x0(Re0Buffer *b) { ldr_sp(b, 0, 0); inst(b, 0x910023FFu); }   /* ldr x0,[sp]; add sp,sp,#8 */
+/* AAPCS64 requires the stack pointer to be 16-byte aligned whenever memory is
+ * accessed through it, so every value slot is 16 bytes. */
+static void push_x0(Re0Buffer *b) { inst(b, 0xD10043FFu); str_sp(b, 0, 0); } /* sub sp,sp,#16; str x0,[sp] */
+static void pop_x0(Re0Buffer *b) { ldr_sp(b, 0, 0); inst(b, 0x910043FFu); }   /* ldr x0,[sp]; add sp,sp,#16 */
 
 static void ldr_x29(Re0Buffer *b, unsigned rt, int32_t off) {
     if (off >= -256 && off <= 255) {
@@ -92,7 +94,7 @@ static void binary_integer(NModule *m, NFunction *f, NInst *in) {
     unsigned bits = n_type_bits(m->target, in->type);
     bool sign = n_type_signed(in->type);
     Re0BinOpKind op = (Re0BinOpKind)in->arg;
-    ldr_sp(b, 0, 8); ldr_sp(b, 1, 0);               /* x0 = left, x1 = right */
+    ldr_sp(b, 0, 16); ldr_sp(b, 1, 0);              /* x0 = left, x1 = right */
     if (op >= BINOP_EQ && op <= BINOP_GE) {
         inst(b, 0xEB00001F | (1 << 16));            /* cmp x0, x1 */
         unsigned cond = compare_condition(op, sign);
@@ -140,7 +142,7 @@ static void binary_integer(NModule *m, NFunction *f, NInst *in) {
             default: fail(m, f, "invalid aarch64 binary operation"); return;
         }
     }
-    inst(b, 0x910023FFu);                            /* add sp,sp,#8 */
+    inst(b, 0x910043FFu);                            /* add sp,sp,#16 (two slots -> one) */
     str_sp(b, 0, 0);
 }
 
@@ -223,20 +225,16 @@ static void function(NModule *m, NFunction *f) {
                 for (int j = 0; j < target->param_count; j++) {
                     if (n_type_float(target->params[j])) { fail(m, f, "floating point is not supported on aarch64 yet"); break; }
                     unsigned reg = call_gp++;
-                    int32_t off = 8 * (target->param_count - 1 - j); /* value j from current sp */
+                    int32_t off = 16 * (target->param_count - 1 - j); /* value j from current sp */
                     ldr_sp(b, reg, (uint32_t)off);
                 }
-                /* Drop the argument slots, then keep sp 16-byte aligned at the
-                 * call (AAPCS64), mirroring the x86-64 sequence. */
-                size_t drop = 8 * (size_t)target->param_count;
+                /* 16-byte slots keep sp 16-byte aligned, so no call padding is
+                 * needed; drop the argument slots and call. */
+                size_t drop = 16 * (size_t)target->param_count;
                 if (drop) inst(b, 0x91000000u | ((uint32_t)drop << 10) | (31 << 5) | 31); /* add sp,sp,#drop */
-                size_t d0 = (size_t)(in->depth - target->param_count);
-                size_t pad = 8 * (d0 & 1);
-                if (pad) inst(b, 0xD10023FFu);        /* sub sp,sp,#8 */
                 size_t at = b->len;
                 inst(b, 0x94000000u);                 /* bl */
                 n_reloc_add(m, at, in->arg);
-                if (pad) inst(b, 0x910023FFu);        /* add sp,sp,#8 */
                 if (target->result == N_UNIT) mov_imm(b, 0, 0);
                 else normalize(b, m->target, target->result);
                 push_x0(b);
