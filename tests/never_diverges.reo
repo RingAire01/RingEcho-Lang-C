@@ -1,0 +1,13 @@
+/* `!`/`never` participates in control flow: a diverging call satisfies a
+ * non-unit return type, and a `-> !` function only needs to diverge. */
+fn fail() -> ! { panic("boom") }
+
+fn choose(b: bool) -> i64 { if b { return 1; } else { fail() } }
+
+fn classify(x: i64) -> i64 { match x { 0 => 0, _ => 1 } }
+
+fn main() {
+    assert(choose(true) == 1);
+    assert(classify(0) == 0);
+    assert(classify(5) == 1);
+}

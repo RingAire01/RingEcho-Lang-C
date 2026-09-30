@@ -128,6 +128,7 @@ static const char *type_token_text(Re0TokenKind k, const char *str_val) {
         case TK_AMPERSAND: return "&";
         case TK_STAR: return "*";
         case TK_ARROW: return "->";
+        case TK_BANG: return "!";
         default: return NULL;
     }
 }

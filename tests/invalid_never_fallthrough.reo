@@ -1,0 +1,3 @@
+/* A `-> !` function must diverge on every path. */
+fn g() -> ! { }
+fn main() { g(); }

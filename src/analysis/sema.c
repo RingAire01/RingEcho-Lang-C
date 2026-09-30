@@ -1146,6 +1146,78 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
     }
 }
 
+/* ── Divergence analysis ──
+ * Used for return-path checking: a statement diverges when control cannot
+ * reach the instruction after it (return, or an expression whose type is
+ * `never`, or a fully-diverging if/match). Types are already resolved when
+ * this runs, so no inference is repeated. */
+static bool expr_diverges(Re0Expr *e);
+static bool block_diverges(Re0Stmt **body, int count);
+static bool wildcard_pattern(const Re0Expr *e) {
+    return e && e->kind == EXPR_IDENT && e->ident.name && strcmp(e->ident.name, "_") == 0;
+}
+static bool expr_diverges(Re0Expr *e) {
+    if (!e) return false;
+    if (e->resolved_type && e->resolved_type->kind == RE0_TYPE_NEVER) return true;
+    switch (e->kind) {
+        case EXPR_BLOCK: {
+            for (int i = 0; i < e->block.count; i++)
+                if (expr_diverges(e->block.stmts[i])) return true;
+            return false;
+        }
+        case EXPR_IF:
+            return e->if_expr.else_ && expr_diverges(e->if_expr.then) && expr_diverges(e->if_expr.else_);
+        case EXPR_MATCH: {
+            bool has_wildcard = false;
+            for (int i = 0; i < e->match_.arm_count; i++) {
+                if (wildcard_pattern(e->match_.arms[i].pat)) has_wildcard = true;
+                if (!expr_diverges(e->match_.arms[i].body)) return false;
+            }
+            return e->match_.arm_count > 0 && has_wildcard;
+        }
+        default: return false;
+    }
+}
+static bool stmt_diverges(Re0Stmt *st) {
+    if (!st) return false;
+    switch (st->kind) {
+        case STMT_RETURN: return true;
+        case STMT_EXPR: return expr_diverges(st->expr_stmt.expr);
+        case STMT_IF: {
+            if (!st->if_stmt.else_count) return false;
+            for (int i = 0; i < st->if_stmt.branch_count; i++)
+                if (!block_diverges(st->if_stmt.branches[i].body, st->if_stmt.branches[i].body_count)) return false;
+            return block_diverges(st->if_stmt.else_body, st->if_stmt.else_count);
+        }
+        default: return false;
+    }
+}
+static bool block_diverges(Re0Stmt **body, int count) {
+    for (int i = 0; i < count; i++) if (stmt_diverges(body[i])) return true;
+    return false;
+}
+/* A non-unit function must either diverge on every path or end in a tail
+ * expression assignable to its return type. */
+static void sema_check_returns(Re0Sema *s, Re0Stmt *fn, Re0Type *ret) {
+    if (!ret || ret->kind == RE0_TYPE_UNIT || ret->kind == RE0_TYPE_UNKNOWN ||
+        ret->kind == RE0_TYPE_TYPEVAR) return;
+    if (block_diverges(fn->function.body, fn->function.body_count)) return;
+    if (ret->kind == RE0_TYPE_NEVER) {
+        re0_error_append(s->errors, RE0_ERR_SEMANTIC, fn->span, NULL,
+                         "function '%s' returns 'never' but can fall through", fn->function.name);
+        s->had_error = true;
+        return;
+    }
+    Re0Stmt *last = fn->function.body_count ? fn->function.body[fn->function.body_count - 1] : NULL;
+    if (last && last->kind == STMT_EXPR) {
+        Re0Type *tt = last->expr_stmt.expr ? last->expr_stmt.expr->resolved_type : NULL;
+        if (tt && sema_assignable_expr(s, tt, ret, last->expr_stmt.expr)) return;
+    }
+    re0_error_append(s->errors, RE0_ERR_SEMANTIC, fn->span, NULL,
+                     "function '%s' may not return a value on all paths", fn->function.name);
+    s->had_error = true;
+}
+
 static void check_stmt_impl(Re0Sema *s,Re0Stmt *stmt);
 static void check_stmt_inner(Re0Sema *s,Re0Stmt *stmt) {
     if(++s->statement_depth>RE0_MAX_SEMA_DEPTH) {
@@ -1404,6 +1476,7 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
             s->fn_depth++;
             for (int i = 0; i < stmt->function.body_count; i++)
                 check_stmt_inner(s, stmt->function.body[i]);
+            sema_check_returns(s, stmt, ret);
             s->fn_depth--;
             s->current_fn_return = prev_fn_return;
             s->current_scope = saved;

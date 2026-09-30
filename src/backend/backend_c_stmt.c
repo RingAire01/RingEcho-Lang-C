@@ -253,6 +253,13 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             const char *fn_name = s->function.name;
             if (strcmp(fn_name, "main") == 0) fn_name = "main_";
             const char *ret_c = c_storage_return(s->function.ret_type);
+            bool never_ret = false;
+            if (s->function.ret_type) {
+                Re0Type *rt = re0_type_parse(s->function.ret_type);
+                never_ret = rt && rt->kind == RE0_TYPE_NEVER;
+                re0_type_free_tree(rt);
+            }
+            if (never_ret) re0_buffer_write_str(b, "__attribute__((noreturn)) ");
             re0_buffer_write_fmt(b, "%s %s(", ret_c, fn_name);
             if(!s->function.param_count) re0_buffer_write_str(b,"void");
             for (int i = 0; i < s->function.param_count; i++) {
@@ -272,6 +279,7 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             bool previous_return_void=c->c_return_void;c->c_return_void=strcmp(ret_c,"void")==0;
             c_gen_body(c, s->function.body, s->function.body_count, 1);
             c->c_return_void=previous_return_void;
+            if (never_ret) re0_buffer_write_str(b, "    __builtin_unreachable();\n");
             re0_buffer_write_str(b, "}\n\n");
             break;
         }

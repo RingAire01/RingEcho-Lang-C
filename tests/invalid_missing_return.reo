@@ -1,0 +1,3 @@
+/* A non-unit function that can fall through must be rejected. */
+fn f(b: bool) -> i64 { if b { return 1; } }
+fn main() { f(true); }

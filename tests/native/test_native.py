@@ -166,7 +166,6 @@ bool_argument:
             'fn main() { println("hello"); }',
             'type Number = i64; fn main() {}',
             'fn main() { let a = [1, 2]; }',
-            'fn f() -> i64 { let x = 1; } fn main() {}',
             'fn f(a:i64,b:i64,c:i64,d:i64,e:i64,f:i64,g:i64) {} fn main() {}',
             'fn f() -> i64 { return 1; }',
             'fn main() { let x: i128 = 1; }',
