@@ -219,21 +219,24 @@ static void function(NModule *m, NFunction *f) {
             case N_CALL: {
                 NFunction *target = &m->functions[in->arg];
                 if (n_type_float(target->result)) { fail(m, f, "floating point is not supported on aarch64 yet"); break; }
-                unsigned call_gp = 0, call_fp = 0;
+                unsigned call_gp = 0;
                 for (int j = 0; j < target->param_count; j++) {
                     if (n_type_float(target->params[j])) { fail(m, f, "floating point is not supported on aarch64 yet"); break; }
                     unsigned reg = call_gp++;
-                    int32_t off = 8 * (in->depth - 1 - j); /* value j from current sp */
+                    int32_t off = 8 * (target->param_count - 1 - j); /* value j from current sp */
                     ldr_sp(b, reg, (uint32_t)off);
-                    (void)call_fp;
                 }
-                size_t pad = 8 * ((size_t)in->depth & 1); /* keep sp 16-byte aligned at the call */
+                /* Drop the argument slots, then keep sp 16-byte aligned at the
+                 * call (AAPCS64), mirroring the x86-64 sequence. */
+                size_t drop = 8 * (size_t)target->param_count;
+                if (drop) inst(b, 0x91000000u | ((uint32_t)drop << 10) | (31 << 5) | 31); /* add sp,sp,#drop */
+                size_t d0 = (size_t)(in->depth - target->param_count);
+                size_t pad = 8 * (d0 & 1);
                 if (pad) inst(b, 0xD10023FFu);        /* sub sp,sp,#8 */
                 size_t at = b->len;
                 inst(b, 0x94000000u);                 /* bl */
                 n_reloc_add(m, at, in->arg);
-                size_t restore = 8 * (size_t)(target->param_count - 1) + pad;
-                if (restore) inst(b, 0x91000000u | ((uint32_t)restore << 10) | (31 << 5) | 31); /* add sp,sp,#restore */
+                if (pad) inst(b, 0x910023FFu);        /* add sp,sp,#8 */
                 if (target->result == N_UNIT) mov_imm(b, 0, 0);
                 else normalize(b, m->target, target->result);
                 push_x0(b);

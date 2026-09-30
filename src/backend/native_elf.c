@@ -28,7 +28,7 @@ static void section(Re0Buffer *b, size_t name, unsigned type, unsigned flags,
 
 bool n_elf64(NModule *m) {
     Re0Buffer *b = &m->codegen->output, strings, symbols;
-    bool aarch64 = m->target->arch == RE0_ARCH_AARCH64;
+    bool aarch64 = m->target && m->target->arch == RE0_ARCH_AARCH64;
     unsigned machine = aarch64 ? EM_AARCH64 : EM_X86_64;
     unsigned reloc_type = aarch64 ? R_AARCH64_CALL26 : R_X86_64_PLT32;
     uint64_t addend = aarch64 ? 0 : (uint64_t)(int64_t)-4;
