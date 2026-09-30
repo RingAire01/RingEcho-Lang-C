@@ -278,3 +278,8 @@ bigint:
 
 test-bigint: bigint $(TARGET_REV)
 	REO_CC="$(CC)" "./$(TARGET_REV)" run "$(BIGINT_DIR)/demo_bigprime.reo" --lib-dir "$(BIGINT_DIR)/build" --link reo_bigint
+
+# ── compiler-reo (self-hosting seed) ──
+.PHONY: test-selfhost
+test-selfhost: $(TARGET_REV)
+	"./$(TARGET_REV)" run compiler-reo/lexer.reo

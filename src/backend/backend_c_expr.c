@@ -312,6 +312,15 @@ static int c_gen_expr_impl(Re0Codegen *c, Re0Expr *e) {
                     conversion.cast.target_type = (char*)re0_type_kind_name(target.kind);
                     return c_gen_cast(c, &conversion);
                 }
+                if (strcmp(fn, "len") == 0 && e->call.arg_count == 1 &&
+                    (expr_is_string(e->call.args[0]) ||
+                     (e->call.args[0]->resolved_type &&
+                      e->call.args[0]->resolved_type->kind == RE0_TYPE_STR))) {
+                    re0_buffer_write_str(b, "__reo_str_len((char*)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_char(b, ')');
+                    break;
+                }
                 /* Preserve one evaluation even for a statically sized value. */
                 if (strcmp(fn, "len") == 0 && e->call.arg_count == 1) {
                     char at[128];

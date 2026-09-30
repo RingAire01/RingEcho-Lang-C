@@ -1,0 +1,69 @@
+/* compiler-reo seed: a minimal lexer.
+ *
+ * Tokenizes an in-memory source string into identifiers, integer numbers and
+ * single-character symbols. This is the first step of the self-hosted
+ * front-end; the assertions double as the regression check until a full test
+ * harness exists. */
+
+enum TokKind { Ident, Number, Symbol, Eof }
+
+fn is_ident_start(c: char) -> bool {
+    return is_alpha(c);
+}
+
+fn is_ident_continue(c: char) -> bool {
+    return is_alpha(c) || is_digit(c);
+}
+
+fn lex(source: str, idents: svec, numbers: svec, symbols: svec) -> i64 {
+    let n: i64 = len(source);
+    let i: i64 = 0;
+    let count: i64 = 0;
+    while i < n {
+        let c: char = str_char_at(source, i);
+        if c == ' ' {
+            i += 1;
+        } else if c == '\n' {
+            i += 1;
+        } else if is_ident_start(c) {
+            let start: i64 = i;
+            while i < n && is_ident_continue(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(idents, str_slice(source, start, i));
+            count += 1;
+        } else if is_digit(c) {
+            let start: i64 = i;
+            while i < n && is_digit(str_char_at(source, i)) {
+                i += 1;
+            }
+            svec_push(numbers, str_slice(source, start, i));
+            count += 1;
+        } else {
+            svec_push(symbols, str_slice(source, i, i + 1));
+            i += 1;
+            count += 1;
+        }
+    }
+    return count;
+}
+
+fn main() {
+    let source: str = "foo bar12 + 99\nbaz";
+    let idents: svec = svec_new();
+    let numbers: svec = svec_new();
+    let symbols: svec = svec_new();
+    let total: i64 = lex(source, idents, numbers, symbols);
+
+    assert(total == 5);
+    assert(svec_len(idents) == 3);
+    assert(str_eq(svec_get(idents, 0), "foo"));
+    assert(str_eq(svec_get(idents, 1), "bar12"));
+    assert(str_eq(svec_get(idents, 2), "baz"));
+
+    assert(svec_len(numbers) == 1);
+    assert(str_eq(svec_get(numbers, 0), "99"));
+
+    assert(svec_len(symbols) == 1);
+    assert(str_eq(svec_get(symbols, 0), "+"));
+}
