@@ -131,6 +131,7 @@ jobs:
         if: matrix.platform == 'linux' && matrix.arch == 'arm64'
         run: |
           ulimit -c 0
+          sudo apt-get install --no-install-recommends -y gdb || true
           make CONFIG=Release PYTHON=python test-native-aarch64
       - name: 记录 32 位运行时限制
         if: matrix.arch == 'x86'

@@ -44,6 +44,23 @@ class NativeAArch64Tests(unittest.TestCase):
     def assert_ok(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def run_linked(self, exe):
+        """Run a C-linked executable; on a signal, include a gdb backtrace."""
+        result = self.command([exe])
+        if result.returncode < 0:
+            diag = ""
+            try:
+                gdb = subprocess.run(
+                    ["gdb", "-batch", "-ex", "run", "-ex", "bt",
+                     "-ex", "x/8i $pc-16", "--args", str(exe)],
+                    cwd=self.root, text=True, capture_output=True, timeout=60)
+                diag = "\n--- gdb ---\n" + gdb.stdout + gdb.stderr
+            except (OSError, subprocess.SubprocessError) as exc:
+                diag = "\ngdb unavailable: %s" % exc
+            self.fail("linked executable died with signal %d%s" % (-result.returncode, diag))
+        self.assert_ok(result)
+        return result
+
     def test_elf_header_and_execution(self):
         result, output = self.build("fn main() {}", name="inspect")
         self.assert_ok(result)
@@ -99,8 +116,7 @@ class NativeAArch64Tests(unittest.TestCase):
                            "\n".join(declarations) + "\nint main(void) {\n" + "\n".join(calls) + "\n}\n")
         exe = self.root / "oracle"
         self.assert_ok(self.command(["gcc", harness, obj, "-o", exe]))
-        result = self.command([exe])
-        self.assert_ok(result)
+        result = self.run_linked(exe)
         self.assertEqual(result.stdout.splitlines(), expected)
 
     def test_c_abi_argument_layout_interop(self):
@@ -125,8 +141,7 @@ fn call_host() -> i64 { return host_seven() + 1; }
                      " return 0; }\n")
         exe = self.root / "abi"
         self.assert_ok(self.command(["gcc", c, obj, "-o", exe]))
-        result = self.command([exe])
-        self.assert_ok(result)
+        result = self.run_linked(exe)
         self.assertEqual(result.stdout.strip(), "21 102 65534 8")
 
     def test_runtime_failures_are_nonzero(self):
