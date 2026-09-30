@@ -23,6 +23,14 @@ target for literal range checks and integer promotion; the layout manager uses
 it for `sizeof`/`alignof`/field offsets. Native compilation maps the target
 triple to this layout.
 
+## 1a. Mutable globals
+
+`static NAME: T;` and `static NAME: T = init;` (top level) declare a mutable
+global object. Storage is a zero-initialized file-scope object; a non-constant
+initializer is executed by a generated constructor before `main`, so calls,
+allocation and other runtime expressions are allowed. `const` remains an
+immutable compile-time macro. Globals are writable from any function.
+
 ## 2. Raw pointers
 
 Types:

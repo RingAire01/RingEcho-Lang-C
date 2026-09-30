@@ -33,7 +33,7 @@ typedef enum {
     STMT_EXPR, STMT_LET, STMT_ASSIGN, STMT_FIELD_ASSIGN, STMT_INDEX_ASSIGN,
     STMT_IF, STMT_WHILE, STMT_FOR, STMT_RETURN, STMT_BREAK, STMT_CONTINUE,
     STMT_FUNCTION, STMT_STRUCT, STMT_ENUM, STMT_TRAIT, STMT_IMPL,
-    STMT_IMPORT, STMT_MODULE, STMT_EXTERN, STMT_CONST,
+    STMT_IMPORT, STMT_MODULE, STMT_EXTERN, STMT_CONST, STMT_STATIC,
     STMT_TYPE_ALIAS, STMT_COMPONENT, STMT_PUB, STMT_ATTRIBUTE, STMT_STORE,
 } Re0StmtKind;
 
@@ -118,6 +118,8 @@ struct Re0Stmt {
         struct { char *name; Re0Stmt **body; int body_count; } module;
         struct { Re0ExternFnDecl *funcs; int func_count; } extern_;
         struct { char *name; char *type; Re0Expr *value; } const_decl;
+        /* Mutable global storage. `type` is required; `value` is optional. */
+        struct { char *name; char *type; Re0Expr *value; } static_decl;
         struct { char *name; char *target; } type_alias;
         struct { char *name; Re0StructFieldDecl *state; int state_count; Re0Stmt **methods; int method_count; } component;
         struct { Re0Stmt *inner; } pub;

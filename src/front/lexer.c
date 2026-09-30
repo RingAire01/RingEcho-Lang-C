@@ -88,6 +88,7 @@ static Re0Token make_id(Re0Lexer *l, char *lexeme, Re0Pos start) {
     else if (strcmp(lexeme, "break") == 0) t.kind = TK_KW_BREAK;
     else if (strcmp(lexeme, "continue") == 0) t.kind = TK_KW_CONTINUE;
     else if (strcmp(lexeme, "const") == 0) t.kind = TK_KW_CONST;
+    else if (strcmp(lexeme, "static") == 0) t.kind = TK_KW_STATIC;
     else if (strcmp(lexeme, "extern") == 0) t.kind = TK_KW_EXTERN;
     else if (strcmp(lexeme, "component") == 0) t.kind = TK_KW_COMPONENT;
     else if (strcmp(lexeme, "async") == 0) t.kind = TK_KW_ASYNC;

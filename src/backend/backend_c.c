@@ -6,6 +6,7 @@
 
 static void c_begin(Re0Codegen *c) {
     reset_c_state();
+    c_globals_reset();
     if (c->backend == &re0_backend_c_freestanding) {
         re0_buffer_write_str(&c->output,
             "#include <stdint.h>\n#include <stdbool.h>\n"
@@ -51,6 +52,8 @@ static void c_end(Re0Codegen *c) {
         for(int i=0;i<g_lambda_count;i++)pending=pending || !g_lambdas[i].emitted;
         if(!pending)break;
     }
+
+    c_globals_finish(c);
 
     if (c->backend == &re0_backend_c_freestanding) return;
 

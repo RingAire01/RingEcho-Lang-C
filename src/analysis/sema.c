@@ -1578,6 +1578,20 @@ static void check_stmt_impl(Re0Sema *s, Re0Stmt *stmt) {
             re0_scope_define(s->current_scope, stmt->const_decl.name, type, false);
             break;
         }
+        case STMT_STATIC: {
+            Re0Type *type = stmt->static_decl.type ? resolve_type(s, stmt->static_decl.type) : NULL;
+            if (!type) type = re0_type_make(RE0_TYPE_UNKNOWN, NULL);
+            if (stmt->static_decl.value) {
+                Re0Type *value = infer_type(s, stmt->static_decl.value);
+                if (!sema_assignable_expr(s, value, type, stmt->static_decl.value)) {
+                    re0_error_append(s->errors, RE0_ERR_SEMANTIC, stmt->span, NULL,
+                                     "static initializer type mismatch; use an explicit conversion");
+                    s->had_error = true;
+                }
+            }
+            re0_scope_define(s->global_scope, stmt->static_decl.name, type, true);
+            break;
+        }
         case STMT_TRAIT: {
             Re0TraitMethod *tms = (Re0TraitMethod*)xcalloc(
                 (size_t)(stmt->trait_decl.method_count > 0 ? stmt->trait_decl.method_count : 1),

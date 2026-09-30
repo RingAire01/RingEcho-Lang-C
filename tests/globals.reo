@@ -1,0 +1,24 @@
+/* Mutable global storage with constant and runtime initializers. */
+static counter: i64 = 10;
+static label: str = "ring";
+static bucket: svec = svec_new();
+static zeroed: i64;
+
+fn bump() -> i64 { counter += 1; return counter; }
+
+fn main() {
+    assert(counter == 10);
+    assert(bump() == 11);
+    assert(bump() == 12);
+    assert(counter == 12);
+
+    assert(str_eq(label, "ring"));
+
+    svec_push(bucket, "a");
+    svec_push(bucket, "b");
+    assert(svec_len(bucket) == 2);
+    assert(str_eq(svec_get(bucket, 1), "b"));
+
+    zeroed = 7;
+    assert(zeroed == 7);
+}

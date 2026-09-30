@@ -2,6 +2,23 @@
 
 /* statement code generation + backend state reset. */
 
+/* Mutable global initializers are collected here and executed from a
+ * constructor so that non-constant initializers (calls, allocation, ...) are
+ * supported while the storage itself stays a plain file-scope object. */
+static Re0Buffer g_global_init;
+static bool g_global_init_active = false;
+void c_globals_reset(void) {
+    if (!g_global_init_active) { re0_buffer_init(&g_global_init); g_global_init_active = true; }
+    re0_buffer_clear(&g_global_init);
+}
+void c_globals_finish(Re0Codegen *c) {
+    if (!g_global_init_active || g_global_init.len == 0) return;
+    Re0Buffer *o = &c->output;
+    re0_buffer_write_str(o, "static void __reo_init_globals(void) {\n");
+    re0_buffer_write_n(o, g_global_init.data, g_global_init.len);
+    re0_buffer_write_str(o, "}\n__attribute__((constructor)) static void __reo_globals_ctor(void) { __reo_init_globals(); }\n");
+}
+
 void c_gen_body(Re0Codegen *c, Re0Stmt **body, int count, int depth) {
     int saved=var_type_count;
     for (int i = 0; i < count; i++) c->backend->gen_stmt(c, body[i], depth);
@@ -80,6 +97,21 @@ void c_gen_stmt(Re0Codegen *c, Re0Stmt *s, int depth) {
             if (s->const_decl.type) re0_buffer_write_char(b, ')');
             re0_buffer_write_str(b, ")\n");
             break;
+        case STMT_STATIC: {
+            const char *ctype = reo_type_to_c(s->static_decl.type);
+            re0_buffer_write_fmt(b, "static %s %s;\n", ctype, s->static_decl.name);
+            track_var(s->static_decl.name, ctype);
+            if (s->static_decl.value) {
+                Re0Buffer saved = c->output;
+                c->output = g_global_init;
+                re0_buffer_write_fmt(&c->output, "    %s = ", s->static_decl.name);
+                c_gen_expr(c, s->static_decl.value);
+                re0_buffer_write_str(&c->output, ";\n");
+                g_global_init = c->output;   /* persist appended growth */
+                c->output = saved;
+            }
+            break;
+        }
         case STMT_TYPE_ALIAS:
             re0_buffer_write_fmt(b, "typedef %s %s;\n",
                                 reo_type_to_c(s->type_alias.target),

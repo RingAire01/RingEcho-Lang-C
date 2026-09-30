@@ -872,6 +872,20 @@ static Re0Stmt *parse_const(Re0Parser *p) {
     return s;
 }
 
+/* ── static NAME: Type [= init];  (mutable global storage) ── */
+static Re0Stmt *parse_static(Re0Parser *p) {
+    Re0Span span = peek(p)->span; advance(p);
+    Re0Token nm = expect(p, TK_IDENT); expect(p, TK_COLON);
+    char *type = parse_type_name(p);
+    Re0Expr *val = NULL;
+    if (check(p, TK_EQUAL)) { advance(p); val = parse_expr(p); }
+    if (check(p, TK_SEMICOLON)) advance(p);
+    Re0Stmt *s = re0_stmt_make(STMT_STATIC, span);
+    s->static_decl.name = re0_arena_strdup(p->arena, nm.str_val);
+    s->static_decl.type = type; s->static_decl.value = val;
+    return s;
+}
+
 /* ── type Alias = TargetType; ── */
 static Re0Stmt *parse_type_alias(Re0Parser *p) {
     Re0Span span = peek(p)->span; advance(p);
@@ -1062,6 +1076,7 @@ static Re0Stmt *parse_stmt(Re0Parser *p) {
 static Re0Stmt *parse_stmt_inner(Re0Parser *p) {
     if (check(p, TK_KW_LET)) return parse_let(p);
     if (check(p, TK_KW_CONST)) return parse_const(p);
+    if (check(p, TK_KW_STATIC)) return parse_static(p);
     if (check(p, TK_KW_TYPE)) return parse_type_alias(p);
     if (check(p, TK_KW_PUB)) return parse_pub(p);
     if (check(p, TK_KW_FN)) return parse_fn(p);

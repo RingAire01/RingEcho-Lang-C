@@ -94,6 +94,10 @@ bool builtin_returns_float(const char *fn);
 bool builtin_returns_vec(const char *fn);
 bool builtin_returns_svec(const char *fn);
 void clear_var_types(void);
+/* Mutable global storage: declarations are emitted inline; initializers are
+ * collected and run from a constructor so non-constant initializers work. */
+void c_globals_reset(void);
+void c_globals_finish(Re0Codegen *c);
 bool infer_expr_c_type(Re0Expr *e, char *type, size_t type_size);
 const char *reo_type_to_c(const char *t);
 int c_gen_cast(Re0Codegen *c, Re0Expr *e);
