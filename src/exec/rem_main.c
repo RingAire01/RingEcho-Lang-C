@@ -37,7 +37,7 @@
 #endif
 
 static void print_usage(void) {
-    printf("RingEcho Module Manager (rem) v0.2.2\n");
+    printf("RingEcho Module Manager (rem) v0.3.0\n");
     printf("Usage:\n");
     printf("  rem init [name]              Initialize new project\n");
     printf("  rem install <pkg>            Install a package\n");
@@ -451,7 +451,7 @@ int main(int argc, char **argv) {
         return cmd_publish();
     }
     if (strcmp(cmd, "version") == 0 || strcmp(cmd, "--version") == 0) {
-        printf("rem v0.2.2\n");
+        printf("rem v0.3.0\n");
         return 0;
     }
 

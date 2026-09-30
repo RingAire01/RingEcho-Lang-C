@@ -239,7 +239,7 @@ int lsp_server_run(void) {
                 "\"textDocumentSync\":1,"  /* full sync */
                 "\"hoverProvider\":true"
                 "},"
-                "\"serverInfo\":{\"name\":\"reoc-lsp\",\"version\":\"0.2.2\"}"
+                "\"serverInfo\":{\"name\":\"reoc-lsp\",\"version\":\"0.3.0\"}"
                 "}");
         } else if (strcmp(method, "initialized") == 0) {
             /* notification: client acknowledges initialization, no response needed */

@@ -10,7 +10,7 @@ RingEcho 编译器工具链的零依赖 C 实现。
 
 | 项目 | 值 |
 |------|-----|
-| 版本 | 0.2.2 |
+| 版本 | 0.3.0 |
 | 测试 | 通过（make test） |
 | 工具链 | 3 个二进制：`rev` / `rem` / `rvm` |
 | 后端 | C 源码、freestanding C、reo ISA、共享库、WebAssembly (WASI) |

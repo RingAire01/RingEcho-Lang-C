@@ -18,7 +18,7 @@
 #endif
 
 static void print_usage(void) {
-    printf("RingEcho Evaluator (rev) v0.2.2\n");
+    printf("RingEcho Evaluator (rev) v0.3.0\n");
     printf("Usage:\n");
     printf("  rev run <file.reo> [--target c|reo]  Compile and run\n");
     printf("  rev build [file.reo] [-o out]        Compile to executable/asm\n");
