@@ -53,6 +53,26 @@ static bool c_gen_array_conversion(Re0Codegen *c, Re0Expr *e) {
 int c_gen_cast(Re0Codegen *c, Re0Expr *e) {
     Re0Buffer *out = &c->output;
     if (c_gen_array_conversion(c, e)) return 0;
+    /* Explicit fixed-array decay to a pointer or a non-owning slice view. */
+    {
+        Re0Type *src_t = e->cast.inner ? e->cast.inner->resolved_type : NULL;
+        Re0Type *dst_t = e->resolved_type;
+        if (src_t && src_t->kind == RE0_TYPE_ARRAY && src_t->array.inner &&
+            dst_t && (dst_t->kind == RE0_TYPE_PTR || dst_t->kind == RE0_TYPE_SLICE)) {
+            const char *elem = c_storage_type(src_t->array.inner);
+            if (dst_t->kind == RE0_TYPE_PTR) {
+                re0_buffer_write_fmt(out, "((%s)((", reo_type_to_c(e->cast.target_type));
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_str(out, ").data))");
+            } else {
+                const char *slice = reo_type_to_c(e->cast.target_type);
+                re0_buffer_write_fmt(out, "((%s){ (%s*)(", slice, elem);
+                c_gen_expr(c, e->cast.inner);
+                re0_buffer_write_fmt(out, ").data, %zu })", src_t->array.size);
+            }
+            return 0;
+        }
+    }
     /* Function pointers, raw pointers and references lower to a plain C cast;
      * C already performs pointer/integer and pointer/pointer conversions. */
     {

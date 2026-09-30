@@ -1,0 +1,22 @@
+/* Explicit, non-owning decay of a fixed array to a slice or pointer. */
+fn sum(s: [i64]) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < len(s) {
+        total += s[i];
+        i += 1;
+    }
+    return total;
+}
+
+fn main() {
+    let a: [i64; 4] = [1, 2, 3, 4];
+    let s: [i64] = a as [i64];
+    assert(len(s) == 4);
+    assert(s[2] == 3);
+    assert(sum(a as [i64]) == 10);
+
+    let p: *const i64 = a as *const i64;
+    assert(*p == 1);
+    assert(*(p + 3) == 4);
+}

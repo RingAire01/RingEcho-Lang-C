@@ -1,0 +1,17 @@
+/* Byte-buffer primitives over opaque pointers. */
+fn main() {
+    let a: [u8; 4] = [1u8, 2u8, 3u8, 4u8];
+    let b: [u8; 4] = [0u8, 0u8, 0u8, 0u8];
+    let pa: *const u8 = (&a[0]) as *const u8;
+    let pb: *mut u8 = (&mut b[0]) as *mut u8;
+
+    mem_copy(pb as ptr, pa as ptr, 4usize);
+    assert(b[0] == 1u8);
+    assert(b[3] == 4u8);
+    assert(mem_equal(pa as ptr, pb as ptr, 4usize));
+
+    mem_set(pb as ptr, 9u8, 4usize);
+    assert(b[0] == 9u8);
+    assert(b[3] == 9u8);
+    assert(!mem_equal(pa as ptr, pb as ptr, 4usize));
+}

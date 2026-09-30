@@ -335,6 +335,36 @@ static int c_gen_expr_impl(Re0Codegen *c, Re0Expr *e) {
                     re0_buffer_write_char(b, ')');
                     break;
                 }
+                if (strcmp(fn, "mem_copy") == 0 && e->call.arg_count == 3) {
+                    re0_buffer_write_str(b, "memcpy((void*)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_str(b, ", (const void*)");
+                    c_gen_expr(c, e->call.args[1]);
+                    re0_buffer_write_str(b, ", (size_t)");
+                    c_gen_expr(c, e->call.args[2]);
+                    re0_buffer_write_char(b, ')');
+                    break;
+                }
+                if (strcmp(fn, "mem_set") == 0 && e->call.arg_count == 3) {
+                    re0_buffer_write_str(b, "memset((void*)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_str(b, ", (int)");
+                    c_gen_expr(c, e->call.args[1]);
+                    re0_buffer_write_str(b, ", (size_t)");
+                    c_gen_expr(c, e->call.args[2]);
+                    re0_buffer_write_char(b, ')');
+                    break;
+                }
+                if (strcmp(fn, "mem_equal") == 0 && e->call.arg_count == 3) {
+                    re0_buffer_write_str(b, "(memcmp((const void*)");
+                    c_gen_expr(c, e->call.args[0]);
+                    re0_buffer_write_str(b, ", (const void*)");
+                    c_gen_expr(c, e->call.args[1]);
+                    re0_buffer_write_str(b, ", (size_t)");
+                    c_gen_expr(c, e->call.args[2]);
+                    re0_buffer_write_str(b, ") == 0)");
+                    break;
+                }
                 if (strcmp(fn, "str_concat") == 0) { re0_buffer_write_str(b, "__reo_str_concat((char*)"); goto gen2; }
                 if (strcmp(fn, "str_eq") == 0)     { re0_buffer_write_str(b, "__reo_str_eq((char*)"); goto gen2; }
                 if (strcmp(fn, "is_digit") == 0)   { re0_buffer_write_str(b, "__reo_is_digit((char)"); goto gen1; }

@@ -44,6 +44,13 @@ void re0_builtin_init(Re0BuiltinRegistry *r) {
     add_builtin(r, "str_concat", "str", ab_s, ab_t, 2);
     add_builtin(r, "str_eq", "bool", ab_s, ab_t, 2);
     add_builtin(r, "str_to_int", "i64", str_s, str_t, 1);
+    /* byte-buffer primitives operate on opaque pointers + a byte count */
+    add_builtin(r, "mem_copy", "unit",
+                (const char*[]){"dst","src","n"}, (const char*[]){"ptr","ptr","usize"}, 3);
+    add_builtin(r, "mem_set", "unit",
+                (const char*[]){"dst","value","n"}, (const char*[]){"ptr","u8","usize"}, 3);
+    add_builtin(r, "mem_equal", "bool",
+                (const char*[]){"a","b","n"}, (const char*[]){"ptr","ptr","usize"}, 3);
     add_builtin(r, "vec_new", "vec", NULL, NULL, 0);
     add_builtin(r, "vec_push", "unit", vx_s, vx_t, 2);
     add_builtin(r, "vec_get", "i64", (const char*[]){"v","i"}, (const char*[]){"vec","i64"}, 2);

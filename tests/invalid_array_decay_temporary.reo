@@ -1,0 +1,4 @@
+/* Decaying a temporary array must be rejected (the view could dangle). */
+fn main() {
+    let s: [i64] = [1, 2, 3] as [i64];
+}

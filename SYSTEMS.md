@@ -53,6 +53,22 @@ plain address, never an owned reference. Dereferencing an invalid pointer is
 undefined behaviour; the compiler does not insert checks (an `unsafe` boundary
 is planned, see §5).
 
+## 2a. Arrays, slices and byte buffers
+
+- `[T; N]` is a contiguous value type; `sizeof([T; N]) == sizeof(T) * N`.
+- `[T]` is a **non-owning** slice value (`{ T* data; size_t len; }`).
+  Indexing and `len()` work on it; it never allocates.
+- **No implicit decay.** A fixed array does not silently become a slice or
+  pointer. Decay is explicit and must name a place (so the view cannot dangle):
+  - `arr as *const T` / `arr as *mut T` — pointer to the first element;
+  - `arr as [T]` — non-owning slice of the whole array.
+  Decaying a temporary array is rejected.
+- Byte-buffer primitives (over `ptr`, i.e. `void*`):
+  - `mem_copy(dst: ptr, src: ptr, n: usize)` — like `memcpy`;
+  - `mem_set(dst: ptr, value: u8, n: usize)` — like `memset`;
+  - `mem_equal(a: ptr, b: ptr, n: usize) -> bool` — like `memcmp == 0`.
+  Any pointer/reference/string converts implicitly to `ptr` for these calls.
+
 ## 3. Backend support
 
 | Feature            | C | c-freestanding | native |

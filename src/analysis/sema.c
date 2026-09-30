@@ -47,6 +47,12 @@ static bool sema_assignable(Re0Type *from, Re0Type *to) {
     if (from->kind == RE0_TYPE_TYPEVAR || to->kind == RE0_TYPE_TYPEVAR) return true;
     if (from->kind == RE0_TYPE_NEVER) return true;
     if (to->kind == RE0_TYPE_UNIT) return true;
+    /* Any pointer/reference/string converts implicitly to the opaque pointer
+     * type (the `void*`-style erasure used by byte-buffer primitives). */
+    if (to->kind == RE0_TYPE_PTR && !to->ptr_.inner &&
+        (from->kind == RE0_TYPE_PTR || from->kind == RE0_TYPE_REFERENCE ||
+         from->kind == RE0_TYPE_STR))
+        return true;
     return re0_type_coercible(from, to); /* equal or numeric conversion */
 }
 
@@ -1128,6 +1134,20 @@ static Re0Type *infer_type_impl(Re0Sema *s, Re0Expr *e) {
                 if (e->cast.checked && src && src->kind == RE0_TYPE_ARRAY && target->kind == RE0_TYPE_ARRAY &&
                     src->array.inner && target->array.inner && src->array.inner->kind < RE0_TYPE_STR && target->array.inner->kind < RE0_TYPE_STR)
                     legal = true;
+                /* Explicit array decay: `arr as *const T` / `arr as [T]` give a
+                 * non-owning view without copying. Requires a place so the view
+                 * cannot outlive a temporary. */
+                bool decay = src && src->kind == RE0_TYPE_ARRAY && src->array.inner &&
+                    ((dk == RE0_TYPE_PTR && target->ptr_.inner && re0_type_equal(src->array.inner, target->ptr_.inner)) ||
+                     (dk == RE0_TYPE_SLICE && target->slice.inner && re0_type_equal(src->array.inner, target->slice.inner)));
+                if (decay) {
+                    if (!is_place(e->cast.inner)) {
+                        re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
+                                         "array decay requires a place; bind the array to a variable first");
+                        s->had_error = true;
+                    }
+                    legal = true;
+                }
                 if (src && !legal) {
                     re0_error_append(s->errors, RE0_ERR_SEMANTIC, e->span, NULL,
                                      "invalid cast from '%s' to '%s'",
